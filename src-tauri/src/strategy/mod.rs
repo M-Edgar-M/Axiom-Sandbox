@@ -1,8 +1,33 @@
-//! Strategy module — intentionally empty for Phase 1.
+//! Strategy module — Phase 2: JSON-driven Rule Evaluator.
 //!
-//! The hardcoded `AnalysisEngine` has been deliberately excluded.
-//! Phase 2 will introduce a JSON-based "Rule Evaluator" that decouples
-//! the execution engine from any proprietary strategy logic.
+//! ## Architecture
+//! The "brain" is fully decoupled from the "body" (ExecutionEngine).
+//! A user defines their strategy as a JSON document ([`UserStrategyConfig`]),
+//! which the [`RuleEvaluator`] evaluates against live [`MarketData`].
 //!
-//! Users will define entry conditions in the React UI and the Rule Evaluator
-//! will process them against live WebSocket data here.
+//! ## Phase roadmap
+//! - **Phase 1** *(complete)*: Empty placeholder — AnalysisEngine intentionally excluded.
+//! - **Phase 2** *(this module)*: JSON schema + stateless RuleEvaluator.
+//! - **Phase 3** *(upcoming)*: Tauri IPC commands to load/save strategies from the UI.
+//!
+//! ## Usage
+//! ```ignore
+//! use crate::strategy::{RuleEvaluator, UserStrategyConfig};
+//!
+//! let config: UserStrategyConfig = serde_json::from_str(json_str)?;
+//! let evaluator = RuleEvaluator::new();
+//! if evaluator.evaluate(&market_data, &config)? {
+//!     // All conditions met — pass signal to ExecutionEngine
+//! }
+//! ```
+
+pub mod evaluator;
+pub mod models;
+
+// ── Public re-exports (Phase 3 IPC surface) ────────────────────────────────
+
+pub use evaluator::{EvaluatorError, RuleEvaluator};
+pub use models::{
+    EntryRule, MaCondition, MaRule, MaType, RiskParams, RsiCondition, RsiRule,
+    UserStrategyConfig, VolumeRule,
+};

@@ -218,6 +218,7 @@ dependencies = [
  "tokio",
  "tokio-tungstenite",
  "url",
+ "yata",
 ]
 
 [[package]]
@@ -6346,6 +6347,15 @@ dependencies = [
  "libc",
  "once_cell",
  "pkg-config",
+]
+
+[[package]]
+name = "yata"
+version = "0.6.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d418badeaeda94d20b9fbf6fa4483a97a2b836495b9270d258161add493bdd57"
+dependencies = [
+ "serde",
 ]
 
 [[package]]
