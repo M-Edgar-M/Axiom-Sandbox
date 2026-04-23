@@ -32,4 +32,4 @@ mod messages;
 mod streams;
 
 pub use manager::{ManagerConfig, SystemEvent, WebSocketManager};
-pub use messages::KlineEvent;
+pub use messages::{KlineEvent, OrderEvent, PriceTick};

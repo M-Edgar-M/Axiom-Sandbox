@@ -21,11 +21,12 @@
 //! - Automatic exit on SL/TP hit
 
 pub mod backfill;
-mod csv_logger;
+pub mod csv_logger;
 pub mod mock_tradfi_feed;
 mod trade_manager;
 mod trade_record;
 
+pub use csv_logger::CsvLogger;
 pub use mock_tradfi_feed::MockCsvFeed;
 pub use trade_manager::TradeManager;
 pub use trade_record::{TradeDirection, TradeRecord, TradeStatus};

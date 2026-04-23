@@ -6,27 +6,26 @@
 //! - `exchange` — ExecutionEngine for Binance Spot/Futures (testnet or live)
 //! - `data`     — CsvLogger & TradeManager for cloud-free local state
 //! - `risk`     — RiskManager with 5% ceiling & daily circuit-breaker
-//! - `strategy` — Placeholder: JSON Rule Evaluator (Phase 2)
+//! - `strategy` — JSON Rule Evaluator (Phase 2)
+//! - `state`    — Thread-safe Tauri managed state (Phase 3)
+//! - `commands` — Tauri IPC command surface (Phase 3)
 
-// ── Phase 1: Infrastructure scaffold — all ported modules are called by Phase 2.
-// Suppress expected dead-code noise until the IPC command surface is built.
+// ── Phase 1/2/3: Infrastructure scaffold.
+// Suppress dead-code noise for modules not yet called from the UI.
 #![allow(dead_code)]
 #![allow(unused_imports)]
 
 pub mod data;
 pub mod exchange;
 pub mod risk;
+pub mod state;
 pub mod strategy;
 pub mod types;
 pub mod websocket;
 
-// ── Tauri IPC Commands ─────────────────────────────────────────────────────
+mod commands;
 
-/// Greet command — placeholder until the full command surface is built in Phase 2.
-#[tauri::command]
-fn greet(name: &str) -> String {
-    format!("Axiom Sandbox — Hello, {}! Engine is online.", name)
-}
+// ── Tauri Application Entry Point ──────────────────────────────────────────
 
 /// Tauri application entry point called by `main.rs`.
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -36,9 +35,22 @@ pub fn run() {
     // this is safe to call unconditionally.
     let _ = dotenvy::dotenv();
 
+    // Initialise the shared application state.
+    // `AppState::new()` seeds the RiskManager at $10,000 paper equity.
+    let app_state = state::AppState::new();
+
     tauri::Builder::default()
         .plugin(tauri_plugin_log::Builder::new().build())
-        .invoke_handler(tauri::generate_handler![greet])
+        // Register the managed state — accessible in every command via
+        // `State<'_, AppState>`.
+        .manage(app_state)
+        // Register all Phase 3 IPC commands.
+        .invoke_handler(tauri::generate_handler![
+            commands::start_mock_session,
+            commands::stop_session,
+            commands::get_trade_history,
+            commands::get_system_status,
+        ])
         .run(tauri::generate_context!())
         .expect("error while running Axiom Sandbox");
 }

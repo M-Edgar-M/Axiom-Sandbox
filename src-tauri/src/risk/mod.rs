@@ -32,4 +32,4 @@ pub mod config;
 mod manager;
 mod sizing;
 
-pub use manager::RiskManager;
+pub use manager::{DailyStats, RiskManager};
