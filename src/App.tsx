@@ -70,27 +70,36 @@ function BasicRiskTab({ config, onChange }: { config: UserStrategyConfig; onChan
         
         <div className="grid grid-cols-1 md:grid-cols-2 gap-lg mt-sm">
           <div className="flex flex-col gap-xs">
-            <label className="font-body-sm text-body-sm text-on-surface-variant">
-              Fractional Risk per Trade — <span className="text-inverse-surface font-data-md">{fmtPct(risk.risk_per_trade)}</span>
-            </label>
+            <div className="flex items-center gap-1">
+              <label className="font-body-sm text-body-sm text-on-surface-variant">
+                Fractional Risk per Trade — <span className="text-inverse-surface font-data-md">{fmtPct(risk.risk_per_trade)}</span>
+              </label>
+              <span className="material-symbols-outlined text-[14px] cursor-help opacity-70 hover:opacity-100 transition-opacity" title="A position-sizing plan that always risks a consistent fraction of your account's total equity on each trade to prevent catastrophic drawdowns.">help</span>
+            </div>
             <div className="flex gap-4 items-center">
               <input type="range" className="flex-1 accent-primary-container" min={0.005} max={0.05} step={0.001} value={risk.risk_per_trade} onChange={(e) => setRisk("risk_per_trade", Number(e.target.value))} />
             </div>
           </div>
 
           <div className="flex flex-col gap-xs">
-            <label className="font-body-sm text-body-sm text-on-surface-variant">
-              Daily Loss Limit — <span className="text-inverse-surface font-data-md">{fmtPct(risk.daily_loss_limit)}</span>
-            </label>
+            <div className="flex items-center gap-1">
+              <label className="font-body-sm text-body-sm text-on-surface-variant">
+                Daily Loss Limit — <span className="text-inverse-surface font-data-md">{fmtPct(risk.daily_loss_limit)}</span>
+              </label>
+              <span className="material-symbols-outlined text-[14px] cursor-help opacity-70 hover:opacity-100 transition-opacity" title="A circuit breaker that automatically halts trading for the day if this loss threshold is reached, protecting your account from a series of losing trades.">help</span>
+            </div>
             <div className="flex gap-4 items-center">
               <input type="range" className="flex-1 accent-tertiary-container" min={0.01} max={0.20} step={0.005} value={risk.daily_loss_limit} onChange={(e) => setRisk("daily_loss_limit", Number(e.target.value))} />
             </div>
           </div>
 
           <div className="flex flex-col gap-xs">
-            <label className="font-body-sm text-body-sm text-on-surface-variant">
-              Profit-Taking Aggression — <span className="text-inverse-surface font-data-md">{fmtPct(risk.profit_taking_pct)}</span>
-            </label>
+            <div className="flex items-center gap-1">
+              <label className="font-body-sm text-body-sm text-on-surface-variant">
+                Profit-Taking Aggression — <span className="text-inverse-surface font-data-md">{fmtPct(risk.profit_taking_pct)}</span>
+              </label>
+              <span className="material-symbols-outlined text-[14px] cursor-help opacity-70 hover:opacity-100 transition-opacity" title="The percentage of your total position that will automatically be sold to lock in gains when the first profit target is reached.">help</span>
+            </div>
             <div className="flex gap-4 items-center">
               <input type="range" className="flex-1 accent-secondary-container" min={0.1} max={1.0} step={0.05} value={risk.profit_taking_pct} onChange={(e) => setRisk("profit_taking_pct", Number(e.target.value))} />
             </div>
@@ -110,9 +119,12 @@ function AdvancedTab({ config, onChange }: { config: UserStrategyConfig; onChang
       <fieldset className="border border-white/5 rounded-lg p-md bg-[#0A0A0A]">
         <legend className="font-label-caps text-label-caps text-primary-container px-2">Trade Quality Filters</legend>
         <div className="flex flex-col gap-xs mt-sm">
-          <label className="font-body-sm text-body-sm text-on-surface-variant">
-            Minimum Reward : Risk Ratio — <span className="text-inverse-surface font-data-md">{risk.minimum_rr.toFixed(1)} : 1</span>
-          </label>
+          <div className="flex items-center gap-1">
+            <label className="font-body-sm text-body-sm text-on-surface-variant">
+              Minimum Reward : Risk Ratio — <span className="text-inverse-surface font-data-md">{risk.minimum_rr.toFixed(1)} : 1</span>
+            </label>
+            <span className="material-symbols-outlined text-[14px] cursor-help opacity-70 hover:opacity-100 transition-opacity" title="A mathematical filter that prevents the bot from executing a trade unless the potential reward is strictly greater than the initial risk.">help</span>
+          </div>
           <div className="flex gap-4 items-center w-full max-w-md">
             <input type="range" className="flex-1 accent-primary-container" min={1.0} max={5.0} step={0.25} value={risk.minimum_rr} onChange={(e) => setRisk("minimum_rr", Number(e.target.value))} />
           </div>
@@ -163,7 +175,10 @@ function StrategyBuilderTab({ config, onChange }: { config: UserStrategyConfig; 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-md">
         {/* RSI */}
         <div className="bg-[#0A0A0A] border border-white/5 rounded-lg p-md flex flex-col gap-sm">
-          <h4 className="font-label-caps text-label-caps text-primary-container">Add RSI Rule</h4>
+          <div className="flex items-center gap-1">
+            <h4 className="font-label-caps text-label-caps text-primary-container">Add RSI Rule</h4>
+            <span className="material-symbols-outlined text-[14px] cursor-help opacity-70 hover:opacity-100 transition-opacity" title="A momentum oscillator that measures the speed and change of price movements, used to identify when a market is overbought or oversold.">help</span>
+          </div>
           <div className="grid grid-cols-2 gap-sm">
             <input type="number" className="bg-surface-container border-outline-variant text-inverse-surface text-sm rounded focus:ring-primary-container" value={rsiDraft.lookback} onChange={e => setRsiDraft({...rsiDraft, lookback: Number(e.target.value)})} placeholder="Lookback"/>
             <input type="number" className="bg-surface-container border-outline-variant text-inverse-surface text-sm rounded focus:ring-primary-container" value={rsiDraft.threshold} onChange={e => setRsiDraft({...rsiDraft, threshold: Number(e.target.value)})} placeholder="Threshold"/>
@@ -179,7 +194,10 @@ function StrategyBuilderTab({ config, onChange }: { config: UserStrategyConfig; 
 
         {/* MA */}
         <div className="bg-[#0A0A0A] border border-white/5 rounded-lg p-md flex flex-col gap-sm">
-          <h4 className="font-label-caps text-label-caps text-primary-container">Add MA Rule</h4>
+          <div className="flex items-center gap-1">
+            <h4 className="font-label-caps text-label-caps text-primary-container">Add MA Rule</h4>
+            <span className="material-symbols-outlined text-[14px] cursor-help opacity-70 hover:opacity-100 transition-opacity" title="A trend-following indicator that averages historical prices over a specific window to smooth out market noise and reveal the true trend direction.">help</span>
+          </div>
           <div className="grid grid-cols-2 gap-sm">
             <select className="bg-surface-container border-outline-variant text-inverse-surface text-sm rounded focus:ring-primary-container" value={maDraft.ma_type} onChange={e => setMaDraft({...maDraft, ma_type: e.target.value as MaType})}><option value="SMA">SMA</option><option value="EMA">EMA</option></select>
             <select className="bg-surface-container border-outline-variant text-inverse-surface text-sm rounded focus:ring-primary-container" value={maDraft.interval} onChange={e => setMaDraft({...maDraft, interval: e.target.value as Interval})}><option value="M15">M15</option><option value="H1">H1</option><option value="H4">H4</option></select>
@@ -194,7 +212,10 @@ function StrategyBuilderTab({ config, onChange }: { config: UserStrategyConfig; 
 
         {/* Volume */}
         <div className="bg-[#0A0A0A] border border-white/5 rounded-lg p-md flex flex-col gap-sm">
-          <h4 className="font-label-caps text-label-caps text-primary-container">Add Volume Rule</h4>
+          <div className="flex items-center gap-1">
+            <h4 className="font-label-caps text-label-caps text-primary-container">Add Volume Rule</h4>
+            <span className="material-symbols-outlined text-[14px] cursor-help opacity-70 hover:opacity-100 transition-opacity" title="Measures the strength of a price move by comparing the current volume to its historical average, helping confirm institutional participation.">help</span>
+          </div>
           <div className="grid grid-cols-2 gap-sm">
             <input type="number" className="bg-surface-container border-outline-variant text-inverse-surface text-sm rounded focus:ring-primary-container col-span-2" value={volDraft.lookback} onChange={e => setVolDraft({...volDraft, lookback: Number(e.target.value)})} placeholder="Lookback"/>
             <input type="number" step={0.1} className="bg-surface-container border-outline-variant text-inverse-surface text-sm rounded focus:ring-primary-container col-span-2" value={volDraft.multiplier} onChange={e => setVolDraft({...volDraft, multiplier: Number(e.target.value)})} placeholder="Multiplier"/>
