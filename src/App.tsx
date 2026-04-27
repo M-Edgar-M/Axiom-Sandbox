@@ -49,9 +49,8 @@ function fmtPct(val: number): string {
 
 // ─── Subcomponents ───────────────────────────────────────────────────────────
 
-function BasicRiskTab({ config, onChange }: { config: UserStrategyConfig; onChange: (v: UserStrategyConfig) => void }) {
-  const risk = config.risk;
-  const setRisk = (field: keyof typeof risk, value: number) => onChange({ ...config, risk: { ...risk, [field]: value } });
+function BasicRiskTab({ config, onChange }: { config: UserStrategyConfig; onChange: React.Dispatch<React.SetStateAction<UserStrategyConfig>> }) {
+  const setRisk = (field: keyof typeof config.risk, value: number) => onChange(prev => ({ ...prev, risk: { ...prev.risk, [field]: value } }));
 
   return (
     <div className="flex flex-col gap-sm p-lg">
@@ -61,7 +60,7 @@ function BasicRiskTab({ config, onChange }: { config: UserStrategyConfig; onChan
           className="bg-surface-container border border-outline-variant text-inverse-surface rounded focus:ring-primary-container focus:border-primary-container font-body-md p-2"
           type="text"
           value={config.name}
-          onChange={(e) => onChange({ ...config, name: e.target.value })}
+          onChange={(e) => onChange(prev => ({ ...prev, name: e.target.value }))}
         />
       </div>
 
@@ -110,9 +109,8 @@ function BasicRiskTab({ config, onChange }: { config: UserStrategyConfig; onChan
   );
 }
 
-function AdvancedTab({ config, onChange }: { config: UserStrategyConfig; onChange: (v: UserStrategyConfig) => void }) {
-  const risk = config.risk;
-  const setRisk = (field: keyof typeof risk, value: number) => onChange({ ...config, risk: { ...risk, [field]: value } });
+function AdvancedTab({ config, onChange }: { config: UserStrategyConfig; onChange: React.Dispatch<React.SetStateAction<UserStrategyConfig>> }) {
+  const setRisk = (field: keyof typeof config.risk, value: number) => onChange(prev => ({ ...prev, risk: { ...prev.risk, [field]: value } }));
 
   return (
     <div className="flex flex-col gap-lg p-lg">
@@ -143,13 +141,13 @@ function AdvancedTab({ config, onChange }: { config: UserStrategyConfig; onChang
   );
 }
 
-function StrategyBuilderTab({ config, onChange }: { config: UserStrategyConfig; onChange: (v: UserStrategyConfig) => void }) {
+function StrategyBuilderTab({ config, onChange }: { config: UserStrategyConfig; onChange: React.Dispatch<React.SetStateAction<UserStrategyConfig>> }) {
   const [rsiDraft, setRsiDraft] = useState<RsiRule>({ lookback: 14, threshold: 30, condition: "is_below", interval: "H1" });
   const [maDraft, setMaDraft] = useState<MaRule>({ ma_type: "EMA", lookback: 20, slow_lookback: undefined, condition: "price_is_above", interval: "H1" });
   const [volDraft, setVolDraft] = useState<VolumeRule>({ lookback: 20, multiplier: 1.5, interval: "H1" });
 
-  const addRule = (rule: EntryRule) => onChange({ ...config, entry_rules: [...config.entry_rules, rule] });
-  const removeRule = (idx: number) => onChange({ ...config, entry_rules: config.entry_rules.filter((_, i) => i !== idx) });
+  const addRule = (rule: EntryRule) => onChange(prev => ({ ...prev, entry_rules: [...prev.entry_rules, rule] }));
+  const removeRule = (idx: number) => onChange(prev => ({ ...prev, entry_rules: prev.entry_rules.filter((_, i) => i !== idx) }));
 
   return (
     <div className="flex flex-col gap-lg p-lg">

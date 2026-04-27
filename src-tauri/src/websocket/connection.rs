@@ -338,56 +338,50 @@ async fn message_loop(
     }
 }
 
+#[derive(serde::Deserialize)]
+struct CombinedEvent {
+    data: serde_json::Value,
+}
+
 /// Parse raw message into WsMessage type.
 ///
 /// Binance combined streams wrap all events in an envelope:
 /// `{"stream":"btcusdt@aggTrade","data":{...actual event...}}`
-/// We first try to extract the inner `data` field, then parse the event.
 fn parse_message(text: &str) -> WsMessage {
     // Try to unwrap the combined stream envelope first.
-    // Combined stream format: {"stream":"<streamName>","data":{<event>}}
-    let inner: &str = if let Ok(envelope) = serde_json::from_str::<serde_json::Value>(text) {
-        if envelope.get("stream").is_some() {
-            if let Some(data) = envelope.get("data") {
-                // SAFETY: leak a string so we can return a &str that lives long enough.
-                // This is acceptable because parse_message is called per-message and
-                // the result is consumed immediately.
-                let data_str = data.to_string();
-                // We'll use an owned approach below instead.
-                return parse_inner_event(&data_str, text);
-            }
-        }
-        text
-    } else {
-        text
-    };
+    if let Ok(envelope) = serde_json::from_str::<CombinedEvent>(text) {
+        return parse_inner_value(envelope.data, text);
+    }
 
-    // If not a combined stream envelope, try parsing directly
-    parse_inner_event(inner, text)
+    // If not a combined stream envelope, try parsing directly as Value
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(text) {
+        return parse_inner_value(value, text);
+    }
+
+    WsMessage::Unknown(text.to_string())
 }
 
-/// Parse the inner event JSON into a WsMessage.
-fn parse_inner_event(json: &str, original: &str) -> WsMessage {
-    // Try parsing as different message types
-    if let Ok(agg_trade) = serde_json::from_str::<super::messages::AggTrade>(json) {
+/// Parse the inner event JSON into a WsMessage directly from a Value.
+fn parse_inner_value(value: serde_json::Value, original: &str) -> WsMessage {
+    if let Ok(agg_trade) = serde_json::from_value::<super::messages::AggTrade>(value.clone()) {
         if agg_trade.event_type == "aggTrade" {
             return WsMessage::AggTrade(agg_trade);
         }
     }
 
-    if let Ok(kline) = serde_json::from_str::<super::messages::KlineEvent>(json) {
+    if let Ok(kline) = serde_json::from_value::<super::messages::KlineEvent>(value.clone()) {
         if kline.event_type == "kline" {
             return WsMessage::Kline(kline);
         }
     }
 
-    if let Ok(account) = serde_json::from_str::<super::messages::AccountUpdate>(json) {
+    if let Ok(account) = serde_json::from_value::<super::messages::AccountUpdate>(value.clone()) {
         if account.event_type == "outboundAccountPosition" {
             return WsMessage::Account(account);
         }
     }
 
-    if let Ok(order) = serde_json::from_str::<super::messages::OrderUpdate>(json) {
+    if let Ok(order) = serde_json::from_value::<super::messages::OrderUpdate>(value.clone()) {
         if order.event_type == "executionReport" {
             return WsMessage::Order(order);
         }
