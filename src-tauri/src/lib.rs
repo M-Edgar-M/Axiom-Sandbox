@@ -30,6 +30,8 @@ mod commands;
 /// Tauri application entry point called by `main.rs`.
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
     // Load .env credentials before anything else.
     // `dotenvy::dotenv()` is a no-op (Ok) if the file does not exist, so
     // this is safe to call unconditionally.

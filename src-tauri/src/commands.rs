@@ -20,7 +20,8 @@ use tauri::State;
 use crate::data::{CsvLogger, TradeRecord};
 use crate::risk::DailyStats;
 use crate::state::AppState;
-use crate::strategy::{RuleEvaluator, UserStrategyConfig};
+use crate::strategy::{EntryRule, EvaluatorError, RuleEvaluator, UserStrategyConfig};
+use crate::types::MarketData;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Response DTOs (frontend-safe — no raw credentials)
@@ -142,9 +143,36 @@ pub async fn start_mock_session(
     // ── Build the mock engine (reads API keys from env, always testnet) ───
     state.build_mock_engine().await;
 
+    // ── Extract required intervals from config ────────────────────────────
+    let mut required_intervals = std::collections::HashSet::new();
+    for rule in &config.entry_rules {
+        match rule {
+            EntryRule::Rsi(r) => { required_intervals.insert(r.interval); },
+            EntryRule::Ma(r) => { required_intervals.insert(r.interval); },
+            EntryRule::Volume(r) => { required_intervals.insert(r.interval); },
+        }
+    }
+
     // ── Extract symbols from config entry rules for WS subscriptions ──────
-    let symbols = vec!["BTCUSDT".to_string()]; // Phase 4: derive from config rules.
+    let symbol = "BTCUSDT".to_string(); // Phase 4: derive from config rules.
+    let symbols = vec![symbol.clone()];
     let intervals = vec!["15m".to_string(), "1h".to_string(), "4h".to_string()];
+
+    // ── Add Historical Backfill ───────────────────────────────────────────
+    let mut market_data = MarketData::new(&symbol);
+    for &interval in &required_intervals {
+        info!("[BACKFILL] Fetching historical data for {} {:?}", symbol, interval);
+        match crate::data::backfill::fetch_historical_data(&symbol, interval).await {
+            Ok(candles) => {
+                market_data.candles_mut(interval).extend(candles);
+            }
+            Err(e) => {
+                let err_msg = format!("Failed to fetch historical data: {}", e);
+                error!("[BACKFILL] {}", err_msg);
+                return Err(err_msg);
+            }
+        }
+    }
 
     // ── Start the WebSocket stack ─────────────────────────────────────────
     let (mut price_rx, _order_rx, mut kline_rx) =
@@ -197,10 +225,34 @@ pub async fn start_mock_session(
                         "[SESSION] Closed kline: {} {} close={}",
                         kline.symbol, kline.kline.interval, kline.kline.close
                     );
-                    // Phase 4: append to MarketData, then call evaluator.evaluate().
-                    // For now we log the evaluator is ready.
-                    let _ = &evaluator;
-                    let _ = &strategy_config;
+                    
+                    if let Some(candle) = crate::types::kline_event_to_candle(&kline) {
+                        let interval = match kline.kline.interval.as_str() {
+                            "15m" => Some(crate::types::Interval::M15),
+                            "1h" => Some(crate::types::Interval::H1),
+                            "4h" => Some(crate::types::Interval::H4),
+                            _ => None,
+                        };
+                        
+                        if let Some(inv) = interval {
+                            market_data.candles_mut(inv).push(candle);
+                        }
+                    }
+
+                    match evaluator.evaluate(&market_data, &strategy_config) {
+                        Ok(true) => {
+                            log::info!("[EVALUATOR] Signal generated: conditions met!");
+                        }
+                        Ok(false) => {
+                            log::debug!("[EVALUATOR] Conditions not met.");
+                        }
+                        Err(EvaluatorError::InsufficientData { required, got, interval }) => {
+                            log::warn!("[EVALUATOR] Insufficient data for {:?}: required {}, available {}", interval, required, got);
+                        }
+                        Err(e) => {
+                            log::warn!("[EVALUATOR] Evaluation error: {:?}", e);
+                        }
+                    }
                 }
             }
 
