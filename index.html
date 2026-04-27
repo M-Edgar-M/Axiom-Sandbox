@@ -1,13 +1,108 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" class="dark">
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Vite + React + TS</title>
+    <title>Quant Sandbox</title>
+    <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet" />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;900&family=Roboto+Mono:wght@400;500&display=swap" rel="stylesheet" />
+    <script id="tailwind-config">
+        tailwind.config = {
+          darkMode: "class",
+          theme: {
+            extend: {
+              "colors": {
+                      "on-tertiary-fixed-variant": "#930019",
+                      "surface-container": "#201f1f",
+                      "tertiary-container": "#ff5357",
+                      "secondary-fixed": "#79ff5b",
+                      "surface-dim": "#131313",
+                      "surface-container-highest": "#353534",
+                      "tertiary-fixed": "#ffdad8",
+                      "primary-fixed": "#d9e2ff",
+                      "inverse-primary": "#0058cb",
+                      "on-error": "#690005",
+                      "on-error-container": "#ffdad6",
+                      "surface-container-low": "#1c1b1b",
+                      "primary-fixed-dim": "#b0c6ff",
+                      "on-primary-container": "#002661",
+                      "on-tertiary-fixed": "#410006",
+                      "background": "#131313",
+                      "surface-container-high": "#2a2a2a",
+                      "outline-variant": "#424655",
+                      "primary": "#b0c6ff",
+                      "primary-container": "#568dff",
+                      "secondary-fixed-dim": "#2ae500",
+                      "on-secondary-fixed-variant": "#095300",
+                      "on-primary": "#002d6f",
+                      "on-secondary": "#053900",
+                      "tertiary": "#ffb3af",
+                      "on-surface-variant": "#c2c6d8",
+                      "on-tertiary": "#68000e",
+                      "surface": "#131313",
+                      "surface-bright": "#393939",
+                      "on-surface": "#e5e2e1",
+                      "tertiary-fixed-dim": "#ffb3af",
+                      "on-background": "#e5e2e1",
+                      "on-secondary-fixed": "#022100",
+                      "on-tertiary-container": "#5c000b",
+                      "error-container": "#93000a",
+                      "surface-variant": "#353534",
+                      "secondary": "#d7ffc5",
+                      "outline": "#8c90a1",
+                      "error": "#ffb4ab",
+                      "on-primary-fixed": "#001945",
+                      "on-primary-fixed-variant": "#00429c",
+                      "on-secondary-container": "#0f6d00",
+                      "secondary-container": "#2ff801",
+                      "inverse-surface": "#e5e2e1",
+                      "inverse-on-surface": "#313030",
+                      "surface-tint": "#b0c6ff",
+                      "surface-container-lowest": "#0e0e0e"
+              },
+              "borderRadius": {
+                      "DEFAULT": "0.125rem",
+                      "lg": "0.25rem",
+                      "xl": "0.5rem",
+                      "full": "0.75rem"
+              },
+              "spacing": {
+                      "xl": "32px",
+                      "margin": "20px",
+                      "xs": "4px",
+                      "sm": "8px",
+                      "base": "4px",
+                      "gutter": "12px",
+                      "md": "16px",
+                      "lg": "24px"
+              },
+              "fontFamily": {
+                      "body-sm": ["Inter"],
+                      "data-md": ["Roboto Mono"],
+                      "body-md": ["Inter"],
+                      "headline-md": ["Inter"],
+                      "data-lg": ["Roboto Mono"],
+                      "headline-lg": ["Inter"],
+                      "label-caps": ["Inter"]
+              },
+              "fontSize": {
+                      "body-sm": ["12px", {"lineHeight": "1.5", "letterSpacing": "0", "fontWeight": "400"}],
+                      "data-md": ["14px", {"lineHeight": "1.4", "letterSpacing": "0", "fontWeight": "400"}],
+                      "body-md": ["14px", {"lineHeight": "1.5", "letterSpacing": "0", "fontWeight": "400"}],
+                      "headline-md": ["24px", {"lineHeight": "1.3", "letterSpacing": "-0.01em", "fontWeight": "600"}],
+                      "data-lg": ["18px", {"lineHeight": "1.2", "letterSpacing": "-0.02em", "fontWeight": "500"}],
+                      "headline-lg": ["32px", {"lineHeight": "1.2", "letterSpacing": "-0.02em", "fontWeight": "600"}],
+                      "label-caps": ["11px", {"lineHeight": "1", "letterSpacing": "0.05em", "fontWeight": "700"}]
+              }
+            }
+          }
+        }
+    </script>
   </head>
-  <body>
-    <div id="root"></div>
+  <body class="bg-background text-on-background font-body-md min-h-screen flex flex-col overflow-x-hidden selection:bg-primary-container selection:text-on-primary-container m-0">
+    <div id="root" class="flex flex-col flex-1"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

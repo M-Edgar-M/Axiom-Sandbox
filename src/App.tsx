@@ -43,415 +43,166 @@ const DEFAULT_CONFIG: UserStrategyConfig = {
   ],
 };
 
-// ─── Helper: format percentage display ───────────────────────────────────────
-
 function fmtPct(val: number): string {
   return (val * 100).toFixed(2) + "%";
 }
 
-// ─── Subcomponent: Basic Risk Tab ─────────────────────────────────────────────
+// ─── Subcomponents ───────────────────────────────────────────────────────────
 
-interface BasicRiskTabProps {
-  config: UserStrategyConfig;
-  onChange: (updated: UserStrategyConfig) => void;
-}
-
-function BasicRiskTab({ config, onChange }: BasicRiskTabProps) {
+function BasicRiskTab({ config, onChange }: { config: UserStrategyConfig; onChange: (v: UserStrategyConfig) => void }) {
   const risk = config.risk;
-
-  function setRisk(field: keyof typeof risk, value: number) {
-    onChange({ ...config, risk: { ...risk, [field]: value } });
-  }
+  const setRisk = (field: keyof typeof risk, value: number) => onChange({ ...config, risk: { ...risk, [field]: value } });
 
   return (
-    <div style={styles.tabContent}>
-      <label style={styles.label}>Strategy Name</label>
-      <input
-        style={styles.input}
-        type="text"
-        value={config.name}
-        onChange={(e) => onChange({ ...config, name: e.target.value })}
-      />
+    <div className="flex flex-col gap-sm p-lg">
+      <div className="flex flex-col gap-xs mb-md">
+        <label className="font-label-caps text-label-caps text-on-surface-variant">Strategy Name</label>
+        <input
+          className="bg-surface-container border border-outline-variant text-inverse-surface rounded focus:ring-primary-container focus:border-primary-container font-body-md p-2"
+          type="text"
+          value={config.name}
+          onChange={(e) => onChange({ ...config, name: e.target.value })}
+        />
+      </div>
 
-      <fieldset style={styles.fieldset}>
-        <legend style={styles.legend}>Risk Parameters</legend>
+      <fieldset className="border border-white/5 rounded-lg p-md bg-[#0A0A0A]">
+        <legend className="font-label-caps text-label-caps text-primary-container px-2">Risk Parameters</legend>
+        
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-lg mt-sm">
+          <div className="flex flex-col gap-xs">
+            <label className="font-body-sm text-body-sm text-on-surface-variant">
+              Fractional Risk per Trade — <span className="text-inverse-surface font-data-md">{fmtPct(risk.risk_per_trade)}</span>
+            </label>
+            <div className="flex gap-4 items-center">
+              <input type="range" className="flex-1 accent-primary-container" min={0.005} max={0.05} step={0.001} value={risk.risk_per_trade} onChange={(e) => setRisk("risk_per_trade", Number(e.target.value))} />
+            </div>
+          </div>
 
-        <label style={styles.label}>
-          Fractional Risk per Trade — {fmtPct(risk.risk_per_trade)}
-          <span style={styles.hint}>&nbsp;(0.5% – 5.0%)</span>
-        </label>
-        <input
-          style={styles.range}
-          type="range"
-          min={0.005}
-          max={0.05}
-          step={0.001}
-          value={risk.risk_per_trade}
-          onChange={(e) => setRisk("risk_per_trade", Number(e.target.value))}
-        />
-        <input
-          style={{ ...styles.input, width: "100px" }}
-          type="number"
-          min={0.005}
-          max={0.05}
-          step={0.001}
-          value={risk.risk_per_trade}
-          onChange={(e) => setRisk("risk_per_trade", Number(e.target.value))}
-        />
+          <div className="flex flex-col gap-xs">
+            <label className="font-body-sm text-body-sm text-on-surface-variant">
+              Daily Loss Limit — <span className="text-inverse-surface font-data-md">{fmtPct(risk.daily_loss_limit)}</span>
+            </label>
+            <div className="flex gap-4 items-center">
+              <input type="range" className="flex-1 accent-tertiary-container" min={0.01} max={0.20} step={0.005} value={risk.daily_loss_limit} onChange={(e) => setRisk("daily_loss_limit", Number(e.target.value))} />
+            </div>
+          </div>
 
-        <label style={styles.label}>
-          Daily Loss Limit (Circuit-Breaker) — {fmtPct(risk.daily_loss_limit)}
-          <span style={styles.hint}>&nbsp;(stops all entries when hit)</span>
-        </label>
-        <input
-          style={styles.range}
-          type="range"
-          min={0.01}
-          max={0.20}
-          step={0.005}
-          value={risk.daily_loss_limit}
-          onChange={(e) => setRisk("daily_loss_limit", Number(e.target.value))}
-        />
-        <input
-          style={{ ...styles.input, width: "100px" }}
-          type="number"
-          min={0.01}
-          max={0.20}
-          step={0.005}
-          value={risk.daily_loss_limit}
-          onChange={(e) => setRisk("daily_loss_limit", Number(e.target.value))}
-        />
-
-        <label style={styles.label}>
-          Profit-Taking Aggression — {fmtPct(risk.profit_taking_pct)}
-          <span style={styles.hint}>&nbsp;(% of position closed at first TP)</span>
-        </label>
-        <input
-          style={styles.range}
-          type="range"
-          min={0.1}
-          max={1.0}
-          step={0.05}
-          value={risk.profit_taking_pct}
-          onChange={(e) => setRisk("profit_taking_pct", Number(e.target.value))}
-        />
-        <input
-          style={{ ...styles.input, width: "100px" }}
-          type="number"
-          min={0.1}
-          max={1.0}
-          step={0.05}
-          value={risk.profit_taking_pct}
-          onChange={(e) => setRisk("profit_taking_pct", Number(e.target.value))}
-        />
+          <div className="flex flex-col gap-xs">
+            <label className="font-body-sm text-body-sm text-on-surface-variant">
+              Profit-Taking Aggression — <span className="text-inverse-surface font-data-md">{fmtPct(risk.profit_taking_pct)}</span>
+            </label>
+            <div className="flex gap-4 items-center">
+              <input type="range" className="flex-1 accent-secondary-container" min={0.1} max={1.0} step={0.05} value={risk.profit_taking_pct} onChange={(e) => setRisk("profit_taking_pct", Number(e.target.value))} />
+            </div>
+          </div>
+        </div>
       </fieldset>
     </div>
   );
 }
 
-// ─── Subcomponent: Advanced Tab ───────────────────────────────────────────────
-
-interface AdvancedTabProps {
-  config: UserStrategyConfig;
-  onChange: (updated: UserStrategyConfig) => void;
-}
-
-function AdvancedTab({ config, onChange }: AdvancedTabProps) {
+function AdvancedTab({ config, onChange }: { config: UserStrategyConfig; onChange: (v: UserStrategyConfig) => void }) {
   const risk = config.risk;
-
-  function setRisk(field: keyof typeof risk, value: number) {
-    onChange({ ...config, risk: { ...risk, [field]: value } });
-  }
+  const setRisk = (field: keyof typeof risk, value: number) => onChange({ ...config, risk: { ...risk, [field]: value } });
 
   return (
-    <div style={styles.tabContent}>
-      <fieldset style={styles.fieldset}>
-        <legend style={styles.legend}>Trade Quality Filters</legend>
-
-        <label style={styles.label}>
-          Minimum Reward : Risk Ratio — {risk.minimum_rr.toFixed(1)} : 1
-          <span style={styles.hint}>&nbsp;(trades below this R:R are skipped)</span>
-        </label>
-        <input
-          style={styles.range}
-          type="range"
-          min={1.0}
-          max={5.0}
-          step={0.25}
-          value={risk.minimum_rr}
-          onChange={(e) => setRisk("minimum_rr", Number(e.target.value))}
-        />
-        <input
-          style={{ ...styles.input, width: "100px" }}
-          type="number"
-          min={1.0}
-          max={5.0}
-          step={0.25}
-          value={risk.minimum_rr}
-          onChange={(e) => setRisk("minimum_rr", Number(e.target.value))}
-        />
+    <div className="flex flex-col gap-lg p-lg">
+      <fieldset className="border border-white/5 rounded-lg p-md bg-[#0A0A0A]">
+        <legend className="font-label-caps text-label-caps text-primary-container px-2">Trade Quality Filters</legend>
+        <div className="flex flex-col gap-xs mt-sm">
+          <label className="font-body-sm text-body-sm text-on-surface-variant">
+            Minimum Reward : Risk Ratio — <span className="text-inverse-surface font-data-md">{risk.minimum_rr.toFixed(1)} : 1</span>
+          </label>
+          <div className="flex gap-4 items-center w-full max-w-md">
+            <input type="range" className="flex-1 accent-primary-container" min={1.0} max={5.0} step={0.25} value={risk.minimum_rr} onChange={(e) => setRisk("minimum_rr", Number(e.target.value))} />
+          </div>
+        </div>
       </fieldset>
 
-      <fieldset style={styles.fieldset}>
-        <legend style={styles.legend}>In-Trade Management (Phase-Based)</legend>
-        <p style={styles.hint}>
-          The engine automatically promotes trades through three phases:
-        </p>
-        <ul style={{ margin: "8px 0 0 16px", lineHeight: "1.8" }}>
-          <li>
-            <strong>Phase 1</strong> — Entry to 1.5R: initial risk. Stop-loss held at entry level.
-          </li>
-          <li>
-            <strong>Phase 2</strong> — At 1.5R: stop moved to breakeven, partial close at{" "}
-            <strong>{fmtPct(risk.profit_taking_pct)}</strong> of position.
-          </li>
-          <li>
-            <strong>Phase 3</strong> — At 2.5R: trailing ATR-based stop activated. Remainder runs.
-          </li>
+      <fieldset className="border border-white/5 rounded-lg p-md bg-[#0A0A0A]">
+        <legend className="font-label-caps text-label-caps text-primary-container px-2">In-Trade Management</legend>
+        <ul className="list-disc list-inside text-body-sm text-on-surface-variant space-y-2 mt-sm">
+          <li><strong className="text-inverse-surface">Phase 1</strong> — Entry to 1.5R: initial risk. Stop-loss held at entry level.</li>
+          <li><strong className="text-inverse-surface">Phase 2</strong> — At 1.5R: stop moved to breakeven, partial close at <strong className="text-inverse-surface">{fmtPct(risk.profit_taking_pct)}</strong>.</li>
+          <li><strong className="text-inverse-surface">Phase 3</strong> — At 2.5R: trailing ATR-based stop activated. Remainder runs.</li>
         </ul>
-        <p style={{ ...styles.hint, marginTop: "10px" }}>
-          Phase thresholds and trailing multiplier will be configurable in a future release.
-        </p>
       </fieldset>
     </div>
   );
 }
 
-// ─── Subcomponent: Strategy Builder Tab ──────────────────────────────────────
+function StrategyBuilderTab({ config, onChange }: { config: UserStrategyConfig; onChange: (v: UserStrategyConfig) => void }) {
+  const [rsiDraft, setRsiDraft] = useState<RsiRule>({ lookback: 14, threshold: 30, condition: "is_below", interval: "H1" });
+  const [maDraft, setMaDraft] = useState<MaRule>({ ma_type: "EMA", lookback: 20, slow_lookback: undefined, condition: "price_is_above", interval: "H1" });
+  const [volDraft, setVolDraft] = useState<VolumeRule>({ lookback: 20, multiplier: 1.5, interval: "H1" });
 
-interface StrategyBuilderTabProps {
-  config: UserStrategyConfig;
-  onChange: (updated: UserStrategyConfig) => void;
-}
-
-// Default new-rule drafts
-const DEFAULT_RSI_DRAFT: RsiRule = { lookback: 14, threshold: 30, condition: "is_below", interval: "H1" };
-const DEFAULT_MA_DRAFT: MaRule = { ma_type: "EMA", lookback: 20, slow_lookback: undefined, condition: "price_is_above", interval: "H1" };
-const DEFAULT_VOL_DRAFT: VolumeRule = { lookback: 20, multiplier: 1.5, interval: "H1" };
-
-function StrategyBuilderTab({ config, onChange }: StrategyBuilderTabProps) {
-  const [rsiDraft, setRsiDraft] = useState<RsiRule>({ ...DEFAULT_RSI_DRAFT });
-  const [maDraft, setMaDraft] = useState<MaRule>({ ...DEFAULT_MA_DRAFT });
-  const [volDraft, setVolDraft] = useState<VolumeRule>({ ...DEFAULT_VOL_DRAFT });
-
-  function addRule(rule: EntryRule) {
-    onChange({ ...config, entry_rules: [...config.entry_rules, rule] });
-  }
-
-  function removeRule(index: number) {
-    const updated = config.entry_rules.filter((_, i) => i !== index);
-    onChange({ ...config, entry_rules: updated });
-  }
-
-  function labelForRule(rule: EntryRule, index: number): string {
-    if ("Rsi" in rule) {
-      const r = rule.Rsi;
-      return `#${index + 1}  RSI(${r.lookback}) ${r.condition} ${r.threshold}  [${r.interval}]`;
-    }
-    if ("Ma" in rule) {
-      const r = rule.Ma;
-      const slow = r.slow_lookback !== undefined ? `/${r.slow_lookback}` : "";
-      return `#${index + 1}  ${r.ma_type}(${r.lookback}${slow}) ${r.condition}  [${r.interval}]`;
-    }
-    if ("Volume" in rule) {
-      const r = rule.Volume;
-      return `#${index + 1}  Volume SMA(${r.lookback}) × ${r.multiplier}  [${r.interval}]`;
-    }
-    return `#${index + 1}  Unknown`;
-  }
-
-  const intervals: Interval[] = ["M15", "H1", "H4"];
-  const rsiConditions: RsiCondition[] = ["crosses_above", "crosses_below", "is_above", "is_below"];
-  const maTypes: MaType[] = ["SMA", "EMA"];
-  const maConditions: MaCondition[] = [
-    "price_crosses_above",
-    "price_crosses_below",
-    "price_is_above",
-    "price_is_below",
-    "fast_crosses_slow",
-    "fast_crosses_below",
-  ];
-
-  const needsSlowLookback =
-    maDraft.condition === "fast_crosses_slow" || maDraft.condition === "fast_crosses_below";
+  const addRule = (rule: EntryRule) => onChange({ ...config, entry_rules: [...config.entry_rules, rule] });
+  const removeRule = (idx: number) => onChange({ ...config, entry_rules: config.entry_rules.filter((_, i) => i !== idx) });
 
   return (
-    <div style={styles.tabContent}>
-      {/* Current Rules */}
-      <fieldset style={styles.fieldset}>
-        <legend style={styles.legend}>Active Entry Rules (AND logic — all must be true)</legend>
-        {config.entry_rules.length === 0 ? (
-          <p style={{ ...styles.hint, color: "#c0392b" }}>
-            No entry rules defined — add at least one rule below.
-          </p>
-        ) : (
-          <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
-            {config.entry_rules.map((rule, i) => (
-              <li key={i} style={styles.ruleRow}>
-                <code style={styles.ruleCode}>{labelForRule(rule, i)}</code>
-                <button
-                  style={styles.removeBtn}
-                  onClick={() => removeRule(i)}
-                  title="Remove this rule"
-                >
-                  ✕
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
-      </fieldset>
+    <div className="flex flex-col gap-lg p-lg">
+      <div className="flex flex-col gap-sm">
+        {config.entry_rules.map((rule, i) => {
+          let label = "";
+          if ("Rsi" in rule) label = `RSI(${rule.Rsi.lookback}) ${rule.Rsi.condition.replace(/_/g, " ")} ${rule.Rsi.threshold} [${rule.Rsi.interval}]`;
+          else if ("Ma" in rule) label = `${rule.Ma.ma_type}(${rule.Ma.lookback}${rule.Ma.slow_lookback ? "/" + rule.Ma.slow_lookback : ""}) ${rule.Ma.condition.replace(/_/g, " ")} [${rule.Ma.interval}]`;
+          else if ("Volume" in rule) label = `Volume SMA(${rule.Volume.lookback}) × ${rule.Volume.multiplier} [${rule.Volume.interval}]`;
+          
+          return (
+            <div key={i} className="flex items-center gap-sm bg-[#0A0A0A] p-sm rounded border border-white/5 hover:border-white/10 transition-colors group">
+              <span className="font-data-md text-data-md text-on-surface-variant w-8">AND</span>
+              <span className="font-data-md text-data-md text-inverse-surface uppercase flex-1">{label}</span>
+              <button onClick={() => removeRule(i)} className="text-on-surface-variant hover:text-tertiary-container transition-all">
+                <span className="material-symbols-outlined text-[18px]">close</span>
+              </button>
+            </div>
+          );
+        })}
+      </div>
 
-      {/* RSI Rule Builder */}
-      <fieldset style={styles.fieldset}>
-        <legend style={styles.legend}>Add RSI Rule</legend>
-        <div style={styles.ruleForm}>
-          <label style={styles.smallLabel}>Lookback</label>
-          <input
-            style={{ ...styles.input, width: "70px" }}
-            type="number"
-            min={2}
-            max={100}
-            value={rsiDraft.lookback}
-            onChange={(e) => setRsiDraft({ ...rsiDraft, lookback: Number(e.target.value) })}
-          />
-          <label style={styles.smallLabel}>Threshold (0–100)</label>
-          <input
-            style={{ ...styles.input, width: "70px" }}
-            type="number"
-            min={0}
-            max={100}
-            value={rsiDraft.threshold}
-            onChange={(e) => setRsiDraft({ ...rsiDraft, threshold: Number(e.target.value) })}
-          />
-          <label style={styles.smallLabel}>Condition</label>
-          <select
-            style={styles.select}
-            value={rsiDraft.condition}
-            onChange={(e) => setRsiDraft({ ...rsiDraft, condition: e.target.value as RsiCondition })}
-          >
-            {rsiConditions.map((c) => (
-              <option key={c} value={c}>{c}</option>
-            ))}
-          </select>
-          <label style={styles.smallLabel}>Timeframe</label>
-          <select
-            style={styles.select}
-            value={rsiDraft.interval}
-            onChange={(e) => setRsiDraft({ ...rsiDraft, interval: e.target.value as Interval })}
-          >
-            {intervals.map((iv) => (
-              <option key={iv} value={iv}>{iv}</option>
-            ))}
-          </select>
-          <button style={styles.addBtn} onClick={() => addRule({ Rsi: { ...rsiDraft } })}>
-            + Add RSI Rule
-          </button>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-md">
+        {/* RSI */}
+        <div className="bg-[#0A0A0A] border border-white/5 rounded-lg p-md flex flex-col gap-sm">
+          <h4 className="font-label-caps text-label-caps text-primary-container">Add RSI Rule</h4>
+          <div className="grid grid-cols-2 gap-sm">
+            <input type="number" className="bg-surface-container border-outline-variant text-inverse-surface text-sm rounded focus:ring-primary-container" value={rsiDraft.lookback} onChange={e => setRsiDraft({...rsiDraft, lookback: Number(e.target.value)})} placeholder="Lookback"/>
+            <input type="number" className="bg-surface-container border-outline-variant text-inverse-surface text-sm rounded focus:ring-primary-container" value={rsiDraft.threshold} onChange={e => setRsiDraft({...rsiDraft, threshold: Number(e.target.value)})} placeholder="Threshold"/>
+            <select className="bg-surface-container border-outline-variant text-inverse-surface text-sm rounded focus:ring-primary-container col-span-2" value={rsiDraft.condition} onChange={e => setRsiDraft({...rsiDraft, condition: e.target.value as RsiCondition})}>
+              <option value="crosses_above">Crosses Above</option><option value="crosses_below">Crosses Below</option><option value="is_above">Is Above</option><option value="is_below">Is Below</option>
+            </select>
+            <select className="bg-surface-container border-outline-variant text-inverse-surface text-sm rounded focus:ring-primary-container col-span-2" value={rsiDraft.interval} onChange={e => setRsiDraft({...rsiDraft, interval: e.target.value as Interval})}>
+              <option value="M15">M15</option><option value="H1">H1</option><option value="H4">H4</option>
+            </select>
+            <button onClick={() => addRule({ Rsi: { ...rsiDraft } })} className="col-span-2 border border-primary-container text-primary-container hover:bg-primary-container hover:text-on-primary-container py-1 rounded transition-colors text-xs font-bold uppercase tracking-widest mt-2">+ Add RSI</button>
+          </div>
         </div>
-      </fieldset>
 
-      {/* MA Rule Builder */}
-      <fieldset style={styles.fieldset}>
-        <legend style={styles.legend}>Add Moving Average Rule</legend>
-        <div style={styles.ruleForm}>
-          <label style={styles.smallLabel}>MA Type</label>
-          <select
-            style={styles.select}
-            value={maDraft.ma_type}
-            onChange={(e) => setMaDraft({ ...maDraft, ma_type: e.target.value as MaType })}
-          >
-            {maTypes.map((t) => (
-              <option key={t} value={t}>{t}</option>
-            ))}
-          </select>
-          <label style={styles.smallLabel}>Fast Lookback</label>
-          <input
-            style={{ ...styles.input, width: "70px" }}
-            type="number"
-            min={2}
-            max={200}
-            value={maDraft.lookback}
-            onChange={(e) => setMaDraft({ ...maDraft, lookback: Number(e.target.value) })}
-          />
-          <label style={styles.smallLabel}>Slow Lookback {needsSlowLookback ? "(required)" : "(optional)"}</label>
-          <input
-            style={{ ...styles.input, width: "70px", opacity: needsSlowLookback ? 1 : 0.5 }}
-            type="number"
-            min={maDraft.lookback + 1}
-            max={500}
-            placeholder="—"
-            value={maDraft.slow_lookback ?? ""}
-            onChange={(e) =>
-              setMaDraft({
-                ...maDraft,
-                slow_lookback: e.target.value === "" ? undefined : Number(e.target.value),
-              })
-            }
-          />
-          <label style={styles.smallLabel}>Condition</label>
-          <select
-            style={styles.select}
-            value={maDraft.condition}
-            onChange={(e) => setMaDraft({ ...maDraft, condition: e.target.value as MaCondition })}
-          >
-            {maConditions.map((c) => (
-              <option key={c} value={c}>{c}</option>
-            ))}
-          </select>
-          <label style={styles.smallLabel}>Timeframe</label>
-          <select
-            style={styles.select}
-            value={maDraft.interval}
-            onChange={(e) => setMaDraft({ ...maDraft, interval: e.target.value as Interval })}
-          >
-            {intervals.map((iv) => (
-              <option key={iv} value={iv}>{iv}</option>
-            ))}
-          </select>
-          <button style={styles.addBtn} onClick={() => addRule({ Ma: { ...maDraft } })}>
-            + Add MA Rule
-          </button>
+        {/* MA */}
+        <div className="bg-[#0A0A0A] border border-white/5 rounded-lg p-md flex flex-col gap-sm">
+          <h4 className="font-label-caps text-label-caps text-primary-container">Add MA Rule</h4>
+          <div className="grid grid-cols-2 gap-sm">
+            <select className="bg-surface-container border-outline-variant text-inverse-surface text-sm rounded focus:ring-primary-container" value={maDraft.ma_type} onChange={e => setMaDraft({...maDraft, ma_type: e.target.value as MaType})}><option value="SMA">SMA</option><option value="EMA">EMA</option></select>
+            <select className="bg-surface-container border-outline-variant text-inverse-surface text-sm rounded focus:ring-primary-container" value={maDraft.interval} onChange={e => setMaDraft({...maDraft, interval: e.target.value as Interval})}><option value="M15">M15</option><option value="H1">H1</option><option value="H4">H4</option></select>
+            <input type="number" className="bg-surface-container border-outline-variant text-inverse-surface text-sm rounded focus:ring-primary-container" value={maDraft.lookback} onChange={e => setMaDraft({...maDraft, lookback: Number(e.target.value)})} placeholder="Fast Lookback"/>
+            <input type="number" className="bg-surface-container border-outline-variant text-inverse-surface text-sm rounded focus:ring-primary-container" value={maDraft.slow_lookback || ""} onChange={e => setMaDraft({...maDraft, slow_lookback: e.target.value ? Number(e.target.value) : undefined})} placeholder="Slow (Opt)"/>
+            <select className="bg-surface-container border-outline-variant text-inverse-surface text-sm rounded focus:ring-primary-container col-span-2" value={maDraft.condition} onChange={e => setMaDraft({...maDraft, condition: e.target.value as MaCondition})}>
+              <option value="price_crosses_above">Price Crosses Above</option><option value="price_crosses_below">Price Crosses Below</option><option value="price_is_above">Price Is Above</option><option value="price_is_below">Price Is Below</option><option value="fast_crosses_slow">Fast Crosses Slow</option><option value="fast_crosses_below">Fast Crosses Below</option>
+            </select>
+            <button onClick={() => addRule({ Ma: { ...maDraft } })} className="col-span-2 border border-primary-container text-primary-container hover:bg-primary-container hover:text-on-primary-container py-1 rounded transition-colors text-xs font-bold uppercase tracking-widest mt-2">+ Add MA</button>
+          </div>
         </div>
-      </fieldset>
 
-      {/* Volume Rule Builder */}
-      <fieldset style={styles.fieldset}>
-        <legend style={styles.legend}>Add Volume Rule</legend>
-        <div style={styles.ruleForm}>
-          <label style={styles.smallLabel}>SMA Lookback</label>
-          <input
-            style={{ ...styles.input, width: "70px" }}
-            type="number"
-            min={2}
-            max={200}
-            value={volDraft.lookback}
-            onChange={(e) => setVolDraft({ ...volDraft, lookback: Number(e.target.value) })}
-          />
-          <label style={styles.smallLabel}>Spike Multiplier</label>
-          <input
-            style={{ ...styles.input, width: "70px" }}
-            type="number"
-            min={1.0}
-            max={10.0}
-            step={0.1}
-            value={volDraft.multiplier}
-            onChange={(e) => setVolDraft({ ...volDraft, multiplier: Number(e.target.value) })}
-          />
-          <label style={styles.smallLabel}>Timeframe</label>
-          <select
-            style={styles.select}
-            value={volDraft.interval}
-            onChange={(e) => setVolDraft({ ...volDraft, interval: e.target.value as Interval })}
-          >
-            {intervals.map((iv) => (
-              <option key={iv} value={iv}>{iv}</option>
-            ))}
-          </select>
-          <button style={styles.addBtn} onClick={() => addRule({ Volume: { ...volDraft } })}>
-            + Add Volume Rule
-          </button>
+        {/* Volume */}
+        <div className="bg-[#0A0A0A] border border-white/5 rounded-lg p-md flex flex-col gap-sm">
+          <h4 className="font-label-caps text-label-caps text-primary-container">Add Volume Rule</h4>
+          <div className="grid grid-cols-2 gap-sm">
+            <input type="number" className="bg-surface-container border-outline-variant text-inverse-surface text-sm rounded focus:ring-primary-container col-span-2" value={volDraft.lookback} onChange={e => setVolDraft({...volDraft, lookback: Number(e.target.value)})} placeholder="Lookback"/>
+            <input type="number" step={0.1} className="bg-surface-container border-outline-variant text-inverse-surface text-sm rounded focus:ring-primary-container col-span-2" value={volDraft.multiplier} onChange={e => setVolDraft({...volDraft, multiplier: Number(e.target.value)})} placeholder="Multiplier"/>
+            <select className="bg-surface-container border-outline-variant text-inverse-surface text-sm rounded focus:ring-primary-container col-span-2" value={volDraft.interval} onChange={e => setVolDraft({...volDraft, interval: e.target.value as Interval})}><option value="M15">M15</option><option value="H1">H1</option><option value="H4">H4</option></select>
+            <button onClick={() => addRule({ Volume: { ...volDraft } })} className="col-span-2 border border-primary-container text-primary-container hover:bg-primary-container hover:text-on-primary-container py-1 rounded transition-colors text-xs font-bold uppercase tracking-widest mt-2">+ Add Volume</button>
+          </div>
         </div>
-      </fieldset>
+      </div>
     </div>
   );
 }
@@ -462,7 +213,7 @@ type Tab = "basic" | "advanced" | "builder";
 
 export default function App() {
   const [config, setConfig] = useState<UserStrategyConfig>(DEFAULT_CONFIG);
-  const [activeTab, setActiveTab] = useState<Tab>("basic");
+  const [activeTab, setActiveTab] = useState<Tab>("builder");
 
   const [sessionActive, setSessionActive] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string>("");
@@ -473,8 +224,6 @@ export default function App() {
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // ── Polling ───────────────────────────────────────────────────────────────
-
   const poll = useCallback(async () => {
     try {
       const [status, trades] = await Promise.all([
@@ -483,35 +232,30 @@ export default function App() {
       ]);
       setSystemStatus(status);
       setTradeHistory(trades);
-      // Sync session flag if backend reports it stopped
       if (!status.session_active && sessionActive) {
         setSessionActive(false);
         setStatusMessage("Session ended (detected via poll).");
       }
     } catch (err) {
-      // Non-fatal — backend may be initialising
       console.warn("[poll]", err);
     }
   }, [sessionActive]);
 
   useEffect(() => {
     if (sessionActive) {
-      poll(); // immediate fetch
+      poll();
       pollRef.current = setInterval(poll, 4000);
     } else {
       if (pollRef.current) {
         clearInterval(pollRef.current);
         pollRef.current = null;
       }
-      // Always fetch status once when idle so equity/stats are visible
       poll();
     }
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
     };
   }, [sessionActive, poll]);
-
-  // ── Session Control ───────────────────────────────────────────────────────
 
   async function handleStartSession() {
     setErrorMessage("");
@@ -521,8 +265,7 @@ export default function App() {
       setSessionActive(true);
       setStatusMessage(result);
     } catch (err) {
-      const msg = typeof err === "string" ? err : String(err);
-      setErrorMessage(msg);
+      setErrorMessage(typeof err === "string" ? err : String(err));
       setStatusMessage("");
     }
   }
@@ -534,520 +277,197 @@ export default function App() {
       const result = await invoke<string>("stop_session");
       setSessionActive(false);
       setStatusMessage(result);
-      await poll(); // final status refresh
+      await poll();
     } catch (err) {
-      const msg = typeof err === "string" ? err : String(err);
-      setErrorMessage(msg);
+      setErrorMessage(typeof err === "string" ? err : String(err));
     }
   }
 
-  // ── Derived display helpers ───────────────────────────────────────────────
-
-  const winRatePct = systemStatus
-    ? (Number(systemStatus.daily_stats.win_rate) * 100).toFixed(1) + "%"
-    : "—";
-
-  const dailyLossPct = systemStatus
-    ? (Number(systemStatus.daily_loss_pct) * 100).toFixed(2) + "%"
-    : "—";
-
-  // ── Render ────────────────────────────────────────────────────────────────
+  const winRatePct = systemStatus ? (Number(systemStatus.daily_stats.win_rate) * 100).toFixed(1) + "%" : "—";
+  const dailyLossPct = systemStatus ? (Number(systemStatus.daily_loss_pct) * 100).toFixed(2) + "%" : "—";
 
   return (
-    <div style={styles.root}>
-      <header style={styles.header}>
-        <h1 style={styles.title}>AXIOM SANDBOX</h1>
-        <p style={styles.subtitle}>Mock Trading Dashboard — Phase 4</p>
-      </header>
-
-      {/* ── Control Panel ── */}
-      <section style={styles.controlPanel}>
-        <div style={styles.controlButtons}>
-          <button
-            style={{
-              ...styles.startBtn,
-              opacity: sessionActive ? 0.4 : 1,
-              cursor: sessionActive ? "not-allowed" : "pointer",
-            }}
+    <>
+      {/* TopAppBar */}
+      <header className="bg-[#121212]/80 backdrop-blur-[20px] shadow-[0_4px_12px_rgba(0,0,0,0.5)] border-b border-white/10 w-full z-50 sticky top-0 h-16 flex justify-between items-center px-6 max-w-full">
+        <div className="flex items-center gap-lg h-full">
+          <span className="text-sm font-black tracking-widest text-white italic mr-4">QUANT_SANDBOX</span>
+          <nav className="hidden md:flex items-end h-full gap-lg font-['Inter'] text-xs font-medium tracking-tight uppercase">
+            <button 
+              className={`pb-4 transition-all duration-200 active:scale-[0.97] ${activeTab === 'basic' ? 'text-[#0070FF] border-b-2 border-[#0070FF]' : 'text-gray-400 hover:text-white hover:bg-white/5'}`} 
+              onClick={() => setActiveTab('basic')}>Basic Risk</button>
+            <button 
+              className={`pb-4 transition-all duration-200 active:scale-[0.97] ${activeTab === 'advanced' ? 'text-[#0070FF] border-b-2 border-[#0070FF]' : 'text-gray-400 hover:text-white hover:bg-white/5'}`} 
+              onClick={() => setActiveTab('advanced')}>Advanced Management</button>
+            <button 
+              className={`pb-4 transition-all duration-200 active:scale-[0.97] ${activeTab === 'builder' ? 'text-[#0070FF] border-b-2 border-[#0070FF]' : 'text-gray-400 hover:text-white hover:bg-white/5'}`} 
+              onClick={() => setActiveTab('builder')}>Strategy Builder</button>
+          </nav>
+        </div>
+        <div className="flex items-center gap-md">
+          <button 
+            className="bg-secondary-container text-on-secondary-container px-4 py-2 rounded font-label-caps text-label-caps hover:bg-secondary-fixed-dim transition-colors shadow-[0_0_10px_rgba(47,248,1,0.2)] disabled:opacity-50 disabled:cursor-not-allowed"
             onClick={handleStartSession}
             disabled={sessionActive}
-          >
-            ▶ START MOCK TRADING
-          </button>
-          <button
-            style={{
-              ...styles.stopBtn,
-              opacity: !sessionActive ? 0.4 : 1,
-              cursor: !sessionActive ? "not-allowed" : "pointer",
-            }}
+          >START MOCK TRADING</button>
+          <button 
+            className="border border-outline-variant text-on-surface-variant px-4 py-2 rounded font-label-caps text-label-caps hover:bg-white/5 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             onClick={handleStopSession}
             disabled={!sessionActive}
-          >
-            ■ STOP SESSION
-          </button>
-
-          <span
-            style={{
-              ...styles.sessionBadge,
-              background: sessionActive ? "#27ae60" : "#555",
-            }}
-          >
-            {sessionActive ? "● LIVE" : "○ IDLE"}
-          </span>
+          >STOP SESSION</button>
+          <div className="h-6 w-px bg-outline-variant mx-2"></div>
+          <button className="text-on-surface-variant hover:text-white transition-colors"><span className="material-symbols-outlined text-[20px]">sensors</span></button>
+          <button className="text-on-surface-variant hover:text-white transition-colors"><span className="material-symbols-outlined text-[20px]">settings</span></button>
+          <button className="text-on-surface-variant hover:text-white transition-colors"><span className="material-symbols-outlined text-[20px]">account_circle</span></button>
         </div>
+      </header>
+      
+      <div className="flex flex-1 pt-16 -mt-16">
+        {/* SideNavBar */}
+        <aside className="fixed left-0 top-16 bottom-0 z-40 flex flex-col justify-between bg-[#0A0A0A] h-[calc(100vh-64px)] w-16 hover:w-60 transition-all duration-300 ease-in-out border-r border-white/5 overflow-hidden group">
+          <div className="flex flex-col py-lg gap-sm px-2">
+            <a className="flex items-center gap-4 px-3 py-3 rounded-DEFAULT bg-[#0070FF]/10 text-[#0070FF] border-r-2 border-[#0070FF] transition-all duration-300 ease-in-out" href="#">
+              <span className="material-symbols-outlined">dashboard</span>
+              <span className="font-['Roboto_Mono'] text-[11px] uppercase tracking-tighter opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">Dashboard</span>
+            </a>
+            <a className="flex items-center gap-4 px-3 py-3 rounded-DEFAULT text-gray-500 hover:text-gray-200 hover:bg-[#1E1E1E] transition-all duration-300 ease-in-out" href="#">
+              <span className="material-symbols-outlined">terminal</span>
+              <span className="font-['Roboto_Mono'] text-[11px] uppercase tracking-tighter opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">Terminals</span>
+            </a>
+            <a className="flex items-center gap-4 px-3 py-3 rounded-DEFAULT text-gray-500 hover:text-gray-200 hover:bg-[#1E1E1E] transition-all duration-300 ease-in-out" href="#">
+              <span className="material-symbols-outlined">history</span>
+              <span className="font-['Roboto_Mono'] text-[11px] uppercase tracking-tighter opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">Backtest</span>
+            </a>
+            <a className="flex items-center gap-4 px-3 py-3 rounded-DEFAULT text-gray-500 hover:text-gray-200 hover:bg-[#1E1E1E] transition-all duration-300 ease-in-out" href="#">
+              <span className="material-symbols-outlined">analytics</span>
+              <span className="font-['Roboto_Mono'] text-[11px] uppercase tracking-tighter opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">Logs</span>
+            </a>
+          </div>
+          <div className="flex flex-col pb-lg px-2 gap-sm">
+            <div className="mt-4 px-3 flex items-center gap-3 opacity-0 group-hover:opacity-100 transition-opacity border-t border-white/5 pt-4">
+              <div className="w-8 h-8 rounded-full bg-surface-container-high flex items-center justify-center shrink-0">
+                <span className="material-symbols-outlined text-[16px] text-on-surface-variant">person</span>
+              </div>
+              <div className="flex flex-col overflow-hidden">
+                <span className="font-data-md text-data-md truncate">TRADER_01</span>
+                <span className="font-label-caps text-label-caps text-on-surface-variant truncate">PRO_ACCOUNT</span>
+              </div>
+            </div>
+          </div>
+        </aside>
 
-        {statusMessage && <p style={styles.statusMsg}>{statusMessage}</p>}
-        {errorMessage && <p style={styles.errorMsg}>⚠ {errorMessage}</p>}
-      </section>
+        {/* Main Content Canvas */}
+        <main className="flex-1 ml-16 p-lg bg-surface-dim min-h-[calc(100vh-64px)] overflow-y-auto">
+          {errorMessage && <div className="mb-4 bg-error-container text-on-error-container p-sm rounded text-body-sm font-bold border border-error">Error: {errorMessage}</div>}
+          {statusMessage && <div className="mb-4 bg-surface-container border border-white/10 p-sm rounded text-on-surface text-body-sm">{statusMessage}</div>}
 
-      {/* ── System Status Panel ── */}
-      {systemStatus && (
-        <section style={styles.statusPanel}>
-          <div style={styles.statCard}>
-            <span style={styles.statLabel}>Equity</span>
-            <span style={styles.statValue}>
-              ${Number(systemStatus.current_equity).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-            </span>
+          {/* Top Control Panel / Status */}
+          <div className="flex flex-col xl:flex-row gap-gutter mb-lg">
+            <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-sm flex-1">
+              <div className="bg-surface-container/60 backdrop-blur-[12px] border border-white/5 rounded-lg p-sm flex flex-col justify-between h-20 shadow-[0_4px_12px_rgba(0,0,0,0.1)]">
+                <span className="font-body-sm text-body-sm text-on-surface-variant">Equity</span>
+                <span className="font-data-lg text-data-lg text-inverse-surface text-right">${systemStatus ? Number(systemStatus.current_equity).toLocaleString(undefined, { minimumFractionDigits: 2 }) : "—"}</span>
+              </div>
+              <div className="bg-surface-container/60 backdrop-blur-[12px] border border-white/5 rounded-lg p-sm flex flex-col justify-between h-20 shadow-[0_4px_12px_rgba(0,0,0,0.1)]">
+                <span className="font-body-sm text-body-sm text-on-surface-variant">Daily P&L</span>
+                <span className={`font-data-lg text-data-lg text-right ${systemStatus && Number(systemStatus.daily_stats.realized_pnl) >= 0 ? "text-secondary-container" : "text-tertiary-container"}`}>
+                  {systemStatus ? (Number(systemStatus.daily_stats.realized_pnl) >= 0 ? "+" : "") + "$" + Number(systemStatus.daily_stats.realized_pnl).toFixed(2) : "—"}
+                </span>
+              </div>
+              <div className="bg-surface-container/60 backdrop-blur-[12px] border border-white/5 rounded-lg p-sm flex flex-col justify-between h-20 shadow-[0_4px_12px_rgba(0,0,0,0.1)]">
+                <span className="font-body-sm text-body-sm text-on-surface-variant">Daily Loss Limit</span>
+                <div className="w-full bg-surface-container-highest h-1.5 rounded-full mt-2 mb-1 overflow-hidden">
+                  <div className={`h-1.5 rounded-full ${systemStatus && Number(systemStatus.daily_loss_pct) > 0.04 ? "bg-tertiary-container" : "bg-primary-container"}`} style={{ width: systemStatus ? `${Math.min(100, Number(systemStatus.daily_loss_pct) * 100)}%` : "0%" }}></div>
+                </div>
+                <span className="font-data-md text-data-md text-inverse-surface text-right">{dailyLossPct}</span>
+              </div>
+              <div className="bg-surface-container/60 backdrop-blur-[12px] border border-white/5 rounded-lg p-sm flex flex-col justify-between h-20 shadow-[0_4px_12px_rgba(0,0,0,0.1)]">
+                <span className="font-body-sm text-body-sm text-on-surface-variant">Trades</span>
+                <span className="font-data-lg text-data-lg text-inverse-surface text-right">{systemStatus ? systemStatus.daily_stats.trade_count : "—"}</span>
+              </div>
+              <div className="bg-surface-container/60 backdrop-blur-[12px] border border-white/5 rounded-lg p-sm flex flex-col justify-between h-20 shadow-[0_4px_12px_rgba(0,0,0,0.1)]">
+                <span className="font-body-sm text-body-sm text-on-surface-variant">Win Rate</span>
+                <span className="font-data-lg text-data-lg text-inverse-surface text-right">{winRatePct}</span>
+              </div>
+              <div className="bg-surface-container/60 backdrop-blur-[12px] border border-white/5 rounded-lg p-sm flex flex-col justify-between h-20 shadow-[0_4px_12px_rgba(0,0,0,0.1)]">
+                <span className="font-body-sm text-body-sm text-on-surface-variant">Circuit Breaker</span>
+                <span className={`font-data-md text-data-md px-2 py-1 rounded w-max self-end mt-1 ${systemStatus?.circuit_breaker_active ? "text-tertiary-container bg-tertiary-container/10" : "text-secondary-container bg-secondary-container/10"}`}>
+                  {systemStatus?.circuit_breaker_active ? "TRIPPED" : "ARMED"}
+                </span>
+              </div>
+            </div>
+            <div className={`flex items-center bg-surface-container/60 backdrop-blur-[12px] border border-white/5 rounded-lg px-md h-20 shrink-0 gap-sm ${!sessionActive && 'opacity-50 grayscale'}`}>
+              <div className={`w-3 h-3 rounded-full ${sessionActive ? 'bg-secondary-container shadow-[0_0_8px_rgba(47,248,1,0.6)] animate-pulse' : 'bg-outline-variant'}`}></div>
+              <span className={`font-label-caps text-label-caps tracking-widest ${sessionActive ? 'text-secondary-container' : 'text-outline-variant'}`}>{sessionActive ? 'LIVE' : 'IDLE'}</span>
+            </div>
           </div>
-          <div style={styles.statCard}>
-            <span style={styles.statLabel}>Daily P&amp;L</span>
-            <span
-              style={{
-                ...styles.statValue,
-                color: Number(systemStatus.daily_stats.realized_pnl) >= 0 ? "#27ae60" : "#c0392b",
-              }}
-            >
-              ${Number(systemStatus.daily_stats.realized_pnl).toFixed(2)}
-            </span>
-          </div>
-          <div style={styles.statCard}>
-            <span style={styles.statLabel}>Daily Loss Used</span>
-            <span
-              style={{
-                ...styles.statValue,
-                color: Number(systemStatus.daily_loss_pct) > 0.04 ? "#c0392b" : "#ecf0f1",
-              }}
-            >
-              {dailyLossPct}
-            </span>
-          </div>
-          <div style={styles.statCard}>
-            <span style={styles.statLabel}>Trades</span>
-            <span style={styles.statValue}>{systemStatus.daily_stats.trade_count}</span>
-          </div>
-          <div style={styles.statCard}>
-            <span style={styles.statLabel}>Win Rate</span>
-            <span style={styles.statValue}>{winRatePct}</span>
-          </div>
-          <div style={styles.statCard}>
-            <span style={styles.statLabel}>Circuit Breaker</span>
-            <span
-              style={{
-                ...styles.statValue,
-                color: systemStatus.circuit_breaker_active ? "#c0392b" : "#27ae60",
-              }}
-            >
-              {systemStatus.circuit_breaker_active ? "TRIPPED" : "OK"}
-            </span>
-          </div>
-        </section>
-      )}
 
-      {/* ── Config Tabs ── */}
-      <section style={styles.configSection}>
-        <nav style={styles.tabNav}>
-          {(["basic", "advanced", "builder"] as Tab[]).map((tab) => (
-            <button
-              key={tab}
-              style={{
-                ...styles.tabBtn,
-                borderBottom: activeTab === tab ? "2px solid #3498db" : "2px solid transparent",
-                color: activeTab === tab ? "#3498db" : "#bdc3c7",
-              }}
-              onClick={() => setActiveTab(tab)}
-            >
-              {tab === "basic" && "Basic Risk"}
-              {tab === "advanced" && "Advanced"}
-              {tab === "builder" && "Strategy Builder"}
-            </button>
-          ))}
-        </nav>
-
-        {activeTab === "basic" && (
-          <BasicRiskTab config={config} onChange={setConfig} />
-        )}
-        {activeTab === "advanced" && (
-          <AdvancedTab config={config} onChange={setConfig} />
-        )}
-        {activeTab === "builder" && (
-          <StrategyBuilderTab config={config} onChange={setConfig} />
-        )}
-      </section>
-
-      {/* ── Trade History Table ── */}
-      <section style={styles.tableSection}>
-        <h2 style={styles.sectionTitle}>
-          Trade History
-          {sessionActive && (
-            <span style={styles.pollBadge}> — polling every 4s</span>
-          )}
-        </h2>
-        {tradeHistory.length === 0 ? (
-          <p style={styles.hint}>No trades recorded yet. Start a session to begin.</p>
-        ) : (
-          <div style={{ overflowX: "auto" }}>
-            <table style={styles.table}>
-              <thead>
-                <tr>
-                  {[
-                    "ID",
-                    "Symbol",
-                    "Dir",
-                    "Entry Time",
-                    "Entry $",
-                    "Stop $",
-                    "TP $",
-                    "Size",
-                    "Status",
-                    "Exit $",
-                    "P&L",
-                    "Phase",
-                  ].map((h) => (
-                    <th key={h} style={styles.th}>
-                      {h}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {tradeHistory.map((trade) => {
-                  const pnl = Number(trade.realized_pnl);
-                  return (
-                    <tr key={trade.id} style={styles.tr}>
-                      <td style={styles.td}>{trade.id.slice(0, 8)}…</td>
-                      <td style={styles.td}>{trade.symbol}</td>
-                      <td
-                        style={{
-                          ...styles.td,
-                          color: trade.direction === "Long" ? "#27ae60" : "#c0392b",
-                          fontWeight: "bold",
-                        }}
-                      >
-                        {trade.direction}
-                      </td>
-                      <td style={styles.td}>
-                        {new Date(trade.entry_time).toLocaleString()}
-                      </td>
-                      <td style={styles.td}>{Number(trade.entry_price).toFixed(2)}</td>
-                      <td style={styles.td}>{Number(trade.stop_loss).toFixed(2)}</td>
-                      <td style={styles.td}>{Number(trade.take_profit).toFixed(2)}</td>
-                      <td style={styles.td}>{Number(trade.position_size).toFixed(4)}</td>
-                      <td
-                        style={{
-                          ...styles.td,
-                          color: trade.status === "Open" ? "#f39c12" : "#95a5a6",
-                        }}
-                      >
-                        {trade.status}
-                      </td>
-                      <td style={styles.td}>
-                        {trade.exit_price ? Number(trade.exit_price).toFixed(2) : "—"}
-                      </td>
-                      <td
-                        style={{
-                          ...styles.td,
-                          color: pnl > 0 ? "#27ae60" : pnl < 0 ? "#c0392b" : "#ecf0f1",
-                        }}
-                      >
-                        {pnl === 0 ? "—" : (pnl > 0 ? "+" : "") + pnl.toFixed(2)}
-                      </td>
-                      <td style={styles.td}>{trade.phase}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+          {/* Strategy Builder Workspace */}
+          <div className="bg-surface-container/60 backdrop-blur-[12px] border border-white/5 rounded-lg flex flex-col mb-lg shadow-[0_4px_12px_rgba(0,0,0,0.1)]">
+            <div className="border-b border-white/5 p-md flex items-center justify-between">
+              <h2 className="font-headline-md text-headline-md text-inverse-surface flex items-center gap-2 text-[18px]">
+                <span className="material-symbols-outlined text-[20px] text-primary-container">account_tree</span>
+                {activeTab === 'basic' ? "Basic Risk Config" : activeTab === 'advanced' ? "Advanced Config" : "Logic Builder"}
+              </h2>
+            </div>
+            
+            {activeTab === 'basic' && <BasicRiskTab config={config} onChange={setConfig} />}
+            {activeTab === 'advanced' && <AdvancedTab config={config} onChange={setConfig} />}
+            {activeTab === 'builder' && <StrategyBuilderTab config={config} onChange={setConfig} />}
           </div>
-        )}
-      </section>
-    </div>
+
+          {/* Bottom Section: Trade History */}
+          <div className="bg-surface-container/60 backdrop-blur-[12px] border border-white/5 rounded-lg flex flex-col shadow-[0_4px_12px_rgba(0,0,0,0.1)]">
+            <div className="border-b border-white/5 p-md flex justify-between items-center">
+              <h3 className="font-headline-md text-headline-md text-inverse-surface text-base flex items-center gap-2">
+                <span className="material-symbols-outlined text-[20px] text-on-surface-variant">table_rows</span>
+                Session Ledger {sessionActive && <span className="text-secondary-container text-xs ml-2"> (Polling)</span>}
+              </h3>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="border-b border-white/5 bg-surface-container-low/50">
+                    <th className="p-sm font-label-caps text-label-caps text-on-surface-variant font-medium">TID</th>
+                    <th className="p-sm font-label-caps text-label-caps text-on-surface-variant font-medium">SYM</th>
+                    <th className="p-sm font-label-caps text-label-caps text-on-surface-variant font-medium">DIR</th>
+                    <th className="p-sm font-label-caps text-label-caps text-on-surface-variant font-medium text-right">ENTRY</th>
+                    <th className="p-sm font-label-caps text-label-caps text-on-surface-variant font-medium text-right">EXIT</th>
+                    <th className="p-sm font-label-caps text-label-caps text-on-surface-variant font-medium">PHASE</th>
+                    <th className="p-sm font-label-caps text-label-caps text-on-surface-variant font-medium text-right pr-lg">P&L</th>
+                  </tr>
+                </thead>
+                <tbody className="font-data-md text-data-md text-inverse-surface">
+                  {tradeHistory.length === 0 ? (
+                    <tr><td colSpan={7} className="p-md text-center text-on-surface-variant text-sm">No trades recorded yet. Start a session to begin.</td></tr>
+                  ) : (
+                    tradeHistory.map(trade => {
+                      const pnl = Number(trade.realized_pnl);
+                      return (
+                        <tr key={trade.id} className="border-b border-white/5 hover:bg-[#1E1E1E] transition-colors">
+                          <td className="p-sm text-on-surface-variant">{trade.id.slice(0, 8)}…</td>
+                          <td className="p-sm">{trade.symbol}</td>
+                          <td className="p-sm">
+                            <span className={`px-2 py-0.5 rounded text-[11px] ${trade.direction === 'Long' ? 'bg-secondary-container/10 text-secondary-container' : 'bg-tertiary-container/10 text-tertiary-container'}`}>
+                              {trade.direction.toUpperCase()}
+                            </span>
+                          </td>
+                          <td className="p-sm text-right">{Number(trade.entry_price).toFixed(2)}</td>
+                          <td className="p-sm text-right">{trade.exit_price ? Number(trade.exit_price).toFixed(2) : "-"}</td>
+                          <td className={`p-sm ${trade.status === 'Open' ? 'text-primary-container' : 'text-on-surface-variant'}`}>{trade.status === 'Open' ? 'OPEN' : 'CLOSED'}</td>
+                          <td className={`p-sm text-right pr-lg ${pnl > 0 ? 'text-secondary-container' : pnl < 0 ? 'text-tertiary-container' : 'text-on-surface-variant'}`}>
+                            {pnl === 0 ? "—" : (pnl > 0 ? "+" : "") + pnl.toFixed(2)}
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </main>
+      </div>
+    </>
   );
 }
-
-// ─── Inline Styles ─────────────────────────────────────────────────────────────
-
-const styles = {
-  root: {
-    fontFamily: "monospace, sans-serif",
-    background: "#1a1a2e",
-    color: "#ecf0f1",
-    minHeight: "100vh",
-    padding: "24px",
-    boxSizing: "border-box" as const,
-    maxWidth: "1200px",
-    margin: "0 auto",
-  },
-  header: {
-    borderBottom: "1px solid #2c3e50",
-    paddingBottom: "12px",
-    marginBottom: "24px",
-  },
-  title: {
-    margin: 0,
-    fontSize: "24px",
-    letterSpacing: "4px",
-    color: "#3498db",
-  },
-  subtitle: {
-    margin: "4px 0 0",
-    fontSize: "12px",
-    color: "#7f8c8d",
-    letterSpacing: "1px",
-  },
-  controlPanel: {
-    background: "#16213e",
-    border: "1px solid #2c3e50",
-    borderRadius: "4px",
-    padding: "20px",
-    marginBottom: "20px",
-  },
-  controlButtons: {
-    display: "flex",
-    alignItems: "center",
-    gap: "12px",
-    flexWrap: "wrap" as const,
-  },
-  startBtn: {
-    background: "#27ae60",
-    color: "#fff",
-    border: "none",
-    padding: "12px 28px",
-    fontSize: "14px",
-    fontWeight: "bold" as const,
-    letterSpacing: "1px",
-    borderRadius: "3px",
-    cursor: "pointer",
-  },
-  stopBtn: {
-    background: "#c0392b",
-    color: "#fff",
-    border: "none",
-    padding: "12px 28px",
-    fontSize: "14px",
-    fontWeight: "bold" as const,
-    letterSpacing: "1px",
-    borderRadius: "3px",
-    cursor: "pointer",
-  },
-  sessionBadge: {
-    padding: "6px 14px",
-    borderRadius: "20px",
-    fontSize: "12px",
-    fontWeight: "bold" as const,
-    letterSpacing: "1px",
-    color: "#fff",
-  },
-  statusMsg: {
-    margin: "12px 0 0",
-    fontSize: "13px",
-    color: "#bdc3c7",
-  },
-  errorMsg: {
-    margin: "12px 0 0",
-    fontSize: "13px",
-    color: "#e74c3c",
-    background: "rgba(231, 76, 60, 0.12)",
-    padding: "10px 14px",
-    borderRadius: "3px",
-    border: "1px solid rgba(231,76,60,0.3)",
-  },
-  statusPanel: {
-    display: "flex",
-    gap: "12px",
-    flexWrap: "wrap" as const,
-    marginBottom: "20px",
-  },
-  statCard: {
-    background: "#16213e",
-    border: "1px solid #2c3e50",
-    borderRadius: "4px",
-    padding: "14px 20px",
-    minWidth: "120px",
-    display: "flex",
-    flexDirection: "column" as const,
-    gap: "4px",
-  },
-  statLabel: {
-    fontSize: "10px",
-    color: "#7f8c8d",
-    letterSpacing: "1px",
-    textTransform: "uppercase" as const,
-  },
-  statValue: {
-    fontSize: "18px",
-    fontWeight: "bold" as const,
-    color: "#ecf0f1",
-  },
-  configSection: {
-    background: "#16213e",
-    border: "1px solid #2c3e50",
-    borderRadius: "4px",
-    marginBottom: "20px",
-  },
-  tabNav: {
-    display: "flex",
-    borderBottom: "1px solid #2c3e50",
-  },
-  tabBtn: {
-    background: "none",
-    border: "none",
-    padding: "12px 24px",
-    fontSize: "13px",
-    cursor: "pointer",
-    letterSpacing: "0.5px",
-    transition: "color 0.15s",
-  },
-  tabContent: {
-    padding: "20px",
-    display: "flex",
-    flexDirection: "column" as const,
-    gap: "12px",
-  },
-  fieldset: {
-    border: "1px solid #2c3e50",
-    borderRadius: "3px",
-    padding: "16px",
-    margin: 0,
-  },
-  legend: {
-    color: "#7f8c8d",
-    fontSize: "11px",
-    letterSpacing: "1px",
-    textTransform: "uppercase" as const,
-    padding: "0 6px",
-  },
-  label: {
-    display: "block",
-    fontSize: "13px",
-    color: "#bdc3c7",
-    marginBottom: "6px",
-    marginTop: "12px",
-  },
-  smallLabel: {
-    fontSize: "11px",
-    color: "#7f8c8d",
-    letterSpacing: "0.5px",
-  },
-  input: {
-    background: "#0f3460",
-    border: "1px solid #2c3e50",
-    color: "#ecf0f1",
-    padding: "6px 10px",
-    fontSize: "13px",
-    borderRadius: "3px",
-    outline: "none",
-  },
-  range: {
-    width: "100%",
-    maxWidth: "400px",
-    display: "block",
-    margin: "4px 0",
-    accentColor: "#3498db",
-  },
-  select: {
-    background: "#0f3460",
-    border: "1px solid #2c3e50",
-    color: "#ecf0f1",
-    padding: "6px 10px",
-    fontSize: "13px",
-    borderRadius: "3px",
-    outline: "none",
-  },
-  hint: {
-    fontSize: "11px",
-    color: "#7f8c8d",
-    margin: 0,
-  },
-  ruleForm: {
-    display: "flex",
-    flexWrap: "wrap" as const,
-    gap: "8px",
-    alignItems: "flex-end",
-  },
-  ruleRow: {
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-    padding: "8px 0",
-    borderBottom: "1px solid #2c3e50",
-  },
-  ruleCode: {
-    fontSize: "12px",
-    color: "#3498db",
-    background: "rgba(52, 152, 219, 0.08)",
-    padding: "4px 10px",
-    borderRadius: "3px",
-  },
-  removeBtn: {
-    background: "none",
-    border: "1px solid #c0392b",
-    color: "#c0392b",
-    padding: "4px 10px",
-    fontSize: "12px",
-    cursor: "pointer",
-    borderRadius: "3px",
-  },
-  addBtn: {
-    background: "#2c3e50",
-    border: "1px solid #3498db",
-    color: "#3498db",
-    padding: "7px 16px",
-    fontSize: "12px",
-    cursor: "pointer",
-    borderRadius: "3px",
-    letterSpacing: "0.5px",
-  },
-  tableSection: {
-    background: "#16213e",
-    border: "1px solid #2c3e50",
-    borderRadius: "4px",
-    padding: "20px",
-  },
-  sectionTitle: {
-    margin: "0 0 16px",
-    fontSize: "14px",
-    letterSpacing: "1px",
-    color: "#bdc3c7",
-    fontWeight: "normal" as const,
-    textTransform: "uppercase" as const,
-  },
-  pollBadge: {
-    fontSize: "11px",
-    color: "#27ae60",
-    fontWeight: "normal" as const,
-    letterSpacing: "0px",
-  },
-  table: {
-    width: "100%",
-    borderCollapse: "collapse" as const,
-    fontSize: "12px",
-  },
-  th: {
-    background: "#0f3460",
-    color: "#7f8c8d",
-    padding: "10px 12px",
-    textAlign: "left" as const,
-    letterSpacing: "0.5px",
-    fontWeight: "normal" as const,
-    borderBottom: "1px solid #2c3e50",
-    whiteSpace: "nowrap" as const,
-  },
-  tr: {
-    borderBottom: "1px solid #1e2a3a",
-  },
-  td: {
-    padding: "9px 12px",
-    color: "#ecf0f1",
-    whiteSpace: "nowrap" as const,
-  },
-} as const;
