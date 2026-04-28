@@ -50,6 +50,7 @@ function fmtPct(val: number): string {
 // ─── Subcomponents ───────────────────────────────────────────────────────────
 
 function BasicRiskTab({ config, onChange }: { config: UserStrategyConfig; onChange: React.Dispatch<React.SetStateAction<UserStrategyConfig>> }) {
+  const { risk } = config;
   const setRisk = (field: keyof typeof config.risk, value: number) => onChange(prev => ({ ...prev, risk: { ...prev.risk, [field]: value } }));
 
   return (
@@ -110,6 +111,7 @@ function BasicRiskTab({ config, onChange }: { config: UserStrategyConfig; onChan
 }
 
 function AdvancedTab({ config, onChange }: { config: UserStrategyConfig; onChange: React.Dispatch<React.SetStateAction<UserStrategyConfig>> }) {
+  const { risk } = config;
   const setRisk = (field: keyof typeof config.risk, value: number) => onChange(prev => ({ ...prev, risk: { ...prev.risk, [field]: value } }));
 
   return (
