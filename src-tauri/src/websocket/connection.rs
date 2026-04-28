@@ -350,19 +350,19 @@ struct CombinedEvent {
 fn parse_message(text: &str) -> WsMessage {
     // Try to unwrap the combined stream envelope first.
     if let Ok(envelope) = serde_json::from_str::<CombinedEvent>(text) {
-        return parse_inner_value(envelope.data, text);
+        return parse_inner_event(envelope.data, text);
     }
 
     // If not a combined stream envelope, try parsing directly as Value
     if let Ok(value) = serde_json::from_str::<serde_json::Value>(text) {
-        return parse_inner_value(value, text);
+        return parse_inner_event(value, text);
     }
 
     WsMessage::Unknown(text.to_string())
 }
 
 /// Parse the inner event JSON into a WsMessage directly from a Value.
-fn parse_inner_value(value: serde_json::Value, original: &str) -> WsMessage {
+fn parse_inner_event(value: serde_json::Value, original: &str) -> WsMessage {
     if let Ok(agg_trade) = serde_json::from_value::<super::messages::AggTrade>(value.clone()) {
         if agg_trade.event_type == "aggTrade" {
             return WsMessage::AggTrade(agg_trade);

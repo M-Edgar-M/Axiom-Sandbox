@@ -202,6 +202,7 @@ pub async fn start_mock_session(
     tokio::spawn(async move {
         info!("[SESSION] Execution loop started");
         let evaluator = RuleEvaluator::new();
+        let mut initialized = false;
 
         // The loop runs until the shutdown flag is set.
         loop {
@@ -239,18 +240,25 @@ pub async fn start_mock_session(
                         }
                     }
 
-                    match evaluator.evaluate(&market_data, &strategy_config) {
-                        Ok(true) => {
-                            log::info!("[EVALUATOR] Signal generated: conditions met!");
-                        }
-                        Ok(false) => {
-                            log::debug!("[EVALUATOR] Conditions not met.");
-                        }
-                        Err(EvaluatorError::InsufficientData { required, got, interval }) => {
-                            log::warn!("[EVALUATOR] Insufficient data for {:?}: required {}, available {}", interval, required, got);
-                        }
-                        Err(e) => {
-                            log::warn!("[EVALUATOR] Evaluation error: {:?}", e);
+                    if !initialized && !market_data.candles_15m.is_empty() {
+                        initialized = true;
+                        info!("[SESSION] Engine initialized with 15m candles");
+                    }
+
+                    if initialized {
+                        match evaluator.evaluate(&market_data, &strategy_config) {
+                            Ok(true) => {
+                                log::info!("[EVALUATOR] Signal generated: conditions met!");
+                            }
+                            Ok(false) => {
+                                log::debug!("[EVALUATOR] Conditions not met.");
+                            }
+                            Err(EvaluatorError::InsufficientData { required, got, interval }) => {
+                                log::warn!("[EVALUATOR] Insufficient data for {:?}: required {}, available {}", interval, required, got);
+                            }
+                            Err(e) => {
+                                log::warn!("[EVALUATOR] Evaluation error: {:?}", e);
+                            }
                         }
                     }
                 }

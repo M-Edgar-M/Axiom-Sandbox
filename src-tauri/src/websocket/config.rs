@@ -6,7 +6,7 @@ use std::time::Duration;
 pub const BINANCE_WS_BASE: &str = "wss://stream.binance.com:9443";
 
 /// Binance WebSocket base URL for Futures.
-pub const BINANCE_FUTURES_WS_BASE: &str = "wss://fstream.binance.com";
+pub const BINANCE_FUTURES_WS_BASE: &str = "wss://stream.binancefuture.com";
 
 /// Binance REST API base URL (for backfill).
 pub const BINANCE_REST_BASE: &str = "https://api.binance.com";
