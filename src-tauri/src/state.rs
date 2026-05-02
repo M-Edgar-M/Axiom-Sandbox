@@ -43,7 +43,7 @@ pub struct AppState {
     pub ws_manager: Mutex<Option<WebSocketManager>>,
 
     /// Risk manager — tracks equity, daily stats, circuit breaker.
-    pub risk_manager: Mutex<RiskManager>,
+    pub risk_manager: Arc<Mutex<RiskManager>>,
 
     /// True while a trading session is running.
     pub session_active: Arc<AtomicBool>,
@@ -61,7 +61,7 @@ impl AppState {
         Self {
             engine: Mutex::new(None),
             ws_manager: Mutex::new(None),
-            risk_manager: Mutex::new(RiskManager::new(dec!(10_000))),
+            risk_manager: Arc::new(Mutex::new(RiskManager::new(dec!(10_000)))),
             session_active: Arc::new(AtomicBool::new(false)),
             system_rx: Mutex::new(None),
         }

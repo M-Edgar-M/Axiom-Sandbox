@@ -14,9 +14,12 @@
 //! - The UI thread is never blocked: heavy work runs on `tokio::spawn`.
 
 use log::{error, info, warn};
+use rust_decimal::Decimal;
+use rust_decimal_macros::dec;
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
+use crate::data::TradeDirection;
 use crate::data::{CsvLogger, TradeRecord};
 use crate::risk::DailyStats;
 use crate::state::AppState;
@@ -198,11 +201,13 @@ pub async fn start_mock_session(
     // We clone the Arc<AtomicBool> so the task can self-terminate on shutdown.
     let session_flag = state.session_active.clone();
     let strategy_config = config.clone();
+    let risk_manager = state.risk_manager.clone();
 
     tokio::spawn(async move {
         info!("[SESSION] Execution loop started");
         let evaluator = RuleEvaluator::new();
         let mut initialized = false;
+        let mut last_price: Option<Decimal> = None;
 
         // The loop runs until the shutdown flag is set.
         loop {
@@ -212,11 +217,9 @@ pub async fn start_mock_session(
             }
 
             // ── Drain price ticks (non-blocking) ─────────────────────────
-            // In a full Phase 4 implementation, price ticks feed the
-            // MarketData struct and trigger `evaluator.evaluate()`.
-            // For Phase 3 we just drain them to keep the channel healthy.
             while let Ok(tick) = price_rx.try_recv() {
                 log::debug!("[SESSION] Price tick: {} @ {}", tick.symbol, tick.price);
+                last_price = Some(tick.price);
             }
 
             // ── Drain klines ───────────────────────────────────────
@@ -262,13 +265,85 @@ pub async fn start_mock_session(
                     match evaluator.evaluate(&market_data, &strategy_config) {
                         Ok(true) => {
                             log::info!("[EVALUATOR] Signal generated: conditions met!");
+
+                            // ── Execute mock trade ───────────────────────
+                            let entry_price = last_price.unwrap_or_else(|| {
+                                // Fallback: use the last closed candle's close price
+                                market_data.candles_15m.last()
+                                    .map(|c| c.close)
+                                    .unwrap_or(dec!(0))
+                            });
+
+                            if entry_price == dec!(0) {
+                                log::warn!("[TRADE] Skipping — no price available");
+                                continue;
+                            }
+
+                            // Use 1% of entry as a simple stop-loss distance for mock
+                            let stop_distance = entry_price * dec!(0.01);
+                            let stop_loss = entry_price - stop_distance;
+                            let minimum_rr = Decimal::try_from(strategy_config.risk.minimum_rr).unwrap_or(dec!(2));
+                            let take_profit = entry_price + stop_distance * minimum_rr;
+
+                            // Calculate position size via risk manager
+                            let rm = risk_manager.lock().await;
+
+                            if rm.is_trading_halted() {
+                                log::warn!("[TRADE] Circuit breaker active — skipping entry");
+                                continue;
+                            }
+
+                            let atr_15m = stop_distance; // Simplified ATR proxy for mock
+                            let atr_4h = stop_distance;  // Same for mock — ratio = 1.0
+
+                            match rm.calculate_position_size(
+                                entry_price,
+                                stop_loss,
+                                atr_15m,
+                                atr_4h,
+                                None,
+                            ) {
+                                Ok(sizing) => {
+                                    let trade_id = format!("mock-{}", uuid::Uuid::new_v4());
+                                    let trade = TradeRecord::new(
+                                        &trade_id,
+                                        "BTCUSDT",
+                                        TradeDirection::Long,
+                                        entry_price,
+                                        stop_loss,
+                                        take_profit,
+                                        sizing.size,
+                                        atr_15m,
+                                        dec!(0), // RSI placeholder
+                                        dec!(0), // ADX placeholder
+                                        "MockSignal".to_string(),
+                                    );
+
+                                    // Log to CSV
+                                    match CsvLogger::new("trades_log.csv") {
+                                        Ok(logger) => {
+                                            if let Err(e) = logger.append_record(&trade) {
+                                                log::error!("[TRADE] CSV write failed: {}", e);
+                                            }
+                                        }
+                                        Err(e) => log::error!("[TRADE] CSV open failed: {}", e),
+                                    }
+
+                                    log::info!(
+                                        "[TRADE] ✅ ENTRY: {} {} @ {} | SL={} TP={} | Size={}",
+                                        trade.direction, trade.symbol, entry_price,
+                                        stop_loss, take_profit, sizing.size
+                                    );
+                                }
+                                Err(e) => {
+                                    log::warn!("[TRADE] Position sizing rejected: {}", e);
+                                }
+                            }
                         }
                         Ok(false) => {
                             // Suppress spam for open candles
-                            // log::debug!("[EVALUATOR] Conditions not met.");
                         }
                         Err(EvaluatorError::InsufficientData { required, got, interval }) => {
-                            // Demote to debug to avoid log flood on open candles
                             log::debug!("[EVALUATOR] Insufficient data for {:?}: required {}, available {}", interval, required, got);
                         }
                         Err(e) => {
