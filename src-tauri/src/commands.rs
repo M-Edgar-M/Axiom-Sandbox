@@ -219,46 +219,60 @@ pub async fn start_mock_session(
                 log::debug!("[SESSION] Price tick: {} @ {}", tick.symbol, tick.price);
             }
 
-            // ── Drain closed klines ───────────────────────────────────────
+            // ── Drain klines ───────────────────────────────────────
             while let Ok(kline) = kline_rx.try_recv() {
-                if kline.kline.is_closed {
-                    info!(
-                        "[SESSION] Closed kline: {} {} close={}",
-                        kline.symbol, kline.kline.interval, kline.kline.close
-                    );
+                let is_closed = kline.kline.is_closed;
+
+                if let Some(candle) = crate::types::kline_event_to_candle(&kline) {
+                    let interval = match kline.kline.interval.as_str() {
+                        "15m" => Some(crate::types::Interval::M15),
+                        "1h" => Some(crate::types::Interval::H1),
+                        "4h" => Some(crate::types::Interval::H4),
+                        _ => None,
+                    };
                     
-                    if let Some(candle) = crate::types::kline_event_to_candle(&kline) {
-                        let interval = match kline.kline.interval.as_str() {
-                            "15m" => Some(crate::types::Interval::M15),
-                            "1h" => Some(crate::types::Interval::H1),
-                            "4h" => Some(crate::types::Interval::H4),
-                            _ => None,
-                        };
-                        
-                        if let Some(inv) = interval {
-                            market_data.candles_mut(inv).push(candle);
+                    if let Some(inv) = interval {
+                        let candles = market_data.candles_mut(inv);
+                        if is_closed {
+                            info!(
+                                "[SESSION] Closed kline: {} {} close={}",
+                                kline.symbol, kline.kline.interval, kline.kline.close
+                            );
+                            candles.push(candle);
+                        } else {
+                            if let Some(last) = candles.last_mut() {
+                                if last.timestamp == candle.timestamp {
+                                    *last = candle;
+                                } else {
+                                    candles.push(candle);
+                                }
+                            } else {
+                                candles.push(candle);
+                            }
                         }
                     }
+                }
 
-                    if !initialized && !market_data.candles_15m.is_empty() {
-                        initialized = true;
-                        info!("[SESSION] Engine initialized with 15m candles");
-                    }
+                if !initialized && !market_data.candles_15m.is_empty() {
+                    initialized = true;
+                    info!("[SESSION] Engine initialized with 15m candles");
+                }
 
-                    if initialized {
-                        match evaluator.evaluate(&market_data, &strategy_config) {
-                            Ok(true) => {
-                                log::info!("[EVALUATOR] Signal generated: conditions met!");
-                            }
-                            Ok(false) => {
-                                log::debug!("[EVALUATOR] Conditions not met.");
-                            }
-                            Err(EvaluatorError::InsufficientData { required, got, interval }) => {
-                                log::warn!("[EVALUATOR] Insufficient data for {:?}: required {}, available {}", interval, required, got);
-                            }
-                            Err(e) => {
-                                log::warn!("[EVALUATOR] Evaluation error: {:?}", e);
-                            }
+                if initialized {
+                    match evaluator.evaluate(&market_data, &strategy_config) {
+                        Ok(true) => {
+                            log::info!("[EVALUATOR] Signal generated: conditions met!");
+                        }
+                        Ok(false) => {
+                            // Suppress spam for open candles
+                            // log::debug!("[EVALUATOR] Conditions not met.");
+                        }
+                        Err(EvaluatorError::InsufficientData { required, got, interval }) => {
+                            // Demote to debug to avoid log flood on open candles
+                            log::debug!("[EVALUATOR] Insufficient data for {:?}: required {}, available {}", interval, required, got);
+                        }
+                        Err(e) => {
+                            log::warn!("[EVALUATOR] Evaluation error: {:?}", e);
                         }
                     }
                 }

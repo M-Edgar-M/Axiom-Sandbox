@@ -359,7 +359,7 @@ mod tests {
     #[test]
     fn test_build_market_stream_url() {
         let url = build_market_stream_url(&["BTCUSDT"], &["15m", "1h"]);
-        assert!(url.starts_with("wss://fstream.binance.com"));
+        assert!(url.starts_with("wss://stream.binancefuture.com"));
         assert!(url.contains("btcusdt@aggTrade"));
         assert!(url.contains("btcusdt@kline_15m"));
         assert!(url.contains("btcusdt@kline_1h"));

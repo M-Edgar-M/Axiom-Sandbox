@@ -5,7 +5,8 @@ use std::time::Duration;
 /// Binance WebSocket base URL (Spot).
 pub const BINANCE_WS_BASE: &str = "wss://stream.binance.com:9443";
 
-/// Binance WebSocket base URL for Futures.
+/// Binance WebSocket base URL for Futures (Testnet — globally accessible).
+/// Mainnet `wss://fstream.binance.com` silently drops data for geo-restricted IPs.
 pub const BINANCE_FUTURES_WS_BASE: &str = "wss://stream.binancefuture.com";
 
 /// Binance REST API base URL (for backfill).
