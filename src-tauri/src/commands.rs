@@ -218,7 +218,7 @@ pub async fn start_mock_session(
 
             // ── Drain price ticks (non-blocking) ─────────────────────────
             while let Ok(tick) = price_rx.try_recv() {
-                log::debug!("[SESSION] Price tick: {} @ {}", tick.symbol, tick.price);
+                log::trace!("[SESSION] Price tick: {} @ {}", tick.symbol, tick.price);
                 last_price = Some(tick.price);
             }
 
@@ -395,7 +395,7 @@ pub async fn stop_session(state: State<'_, AppState>) -> Result<String, String> 
 /// directory.  In Phase 4 this will be resolved via `app_handle.path()`.
 #[tauri::command]
 pub async fn get_trade_history() -> Result<Vec<TradeRecordDto>, String> {
-    info!("[IPC] get_trade_history");
+    log::trace!("[IPC] get_trade_history");
 
     // Resolve to a sensible default. Phase 4 will use app_handle.path().
     let csv_path = "trades_log.csv";
@@ -412,7 +412,7 @@ pub async fn get_trade_history() -> Result<Vec<TradeRecordDto>, String> {
         .read_all_records()
         .map_err(|e| format!("Failed to read trade history: {}", e))?;
 
-    info!("[IPC] Returning {} trade records", records.len());
+    log::trace!("[IPC] Returning {} trade records", records.len());
 
     Ok(records.into_iter().map(TradeRecordDto::from).collect())
 }
