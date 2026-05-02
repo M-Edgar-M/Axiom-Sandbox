@@ -42,7 +42,7 @@ pub const ORDER_RETRY_ATTEMPTS: u32 = 3;
 pub const ORDER_RETRY_DELAY_MS: u64 = 500;
 
 /// Maximum allowed simultaneous open trades per symbol.
-pub const MAX_OPEN_POSITIONS: usize = 3;
+pub const MAX_OPEN_POSITIONS: usize = 1;
 
 /// Minimum minutes between new entries for the same symbol.
 pub const TRADE_COOLDOWN_MINUTES: i64 = 15;

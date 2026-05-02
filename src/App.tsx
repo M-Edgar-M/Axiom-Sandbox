@@ -1,5 +1,6 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 import type {
   UserStrategyConfig,
   EntryRule,
@@ -45,6 +46,105 @@ const DEFAULT_CONFIG: UserStrategyConfig = {
 
 function fmtPct(val: number): string {
   return (val * 100).toFixed(2) + "%";
+}
+
+// ─── Dashboard Components ───────────────────────────────────────────────────
+
+function EquityCurve({ tradeHistory }: { tradeHistory: TradeRecordDto[] }) {
+  const data = useMemo(() => {
+    let currentEquity = 10000;
+    const chartData = [{ name: 'Start', equity: currentEquity }];
+    
+    // Filter closed trades and sort chronologically (oldest to newest)
+    const closedTrades = [...tradeHistory].filter(t => t.status === "Closed").reverse();
+    
+    closedTrades.forEach(trade => {
+      currentEquity += parseFloat(trade.realized_pnl as any);
+      chartData.push({
+        name: new Date(trade.exit_time || trade.entry_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        equity: currentEquity,
+      });
+    });
+    
+    return chartData;
+  }, [tradeHistory]);
+
+  return (
+    <div className="bg-surface-container/60 backdrop-blur-[12px] border border-white/5 rounded-lg p-md h-64 shadow-[0_4px_12px_rgba(0,0,0,0.1)]">
+      <h3 className="font-headline-md text-headline-md text-inverse-surface text-base flex items-center gap-2 mb-4">
+        <span className="material-symbols-outlined text-[20px] text-primary-container">monitoring</span>
+        Equity Curve
+      </h3>
+      <div className="w-full h-48">
+        <ResponsiveContainer width="100%" height="100%">
+          <LineChart data={data}>
+            <XAxis dataKey="name" stroke="#666" fontSize={12} tickLine={false} axisLine={false} />
+            <YAxis domain={['dataMin - 100', 'dataMax + 100']} stroke="#666" fontSize={12} tickLine={false} axisLine={false} tickFormatter={(val) => `$${val}`} />
+            <Tooltip 
+              contentStyle={{ backgroundColor: '#1E1E1E', borderColor: 'rgba(255,255,255,0.1)', borderRadius: '8px', color: '#FFF' }}
+              itemStyle={{ color: '#00FFAA' }}
+            />
+            <Line type="monotone" dataKey="equity" stroke="#00FFAA" strokeWidth={2} dot={false} activeDot={{ r: 6, fill: '#0070FF' }} />
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
+    </div>
+  );
+}
+
+function TradeJournal({ tradeHistory }: { tradeHistory: TradeRecordDto[] }) {
+  return (
+    <div className="bg-surface-container/60 backdrop-blur-[12px] border border-white/5 rounded-lg flex flex-col shadow-[0_4px_12px_rgba(0,0,0,0.1)]">
+      <div className="border-b border-white/5 p-md flex justify-between items-center">
+        <h3 className="font-headline-md text-headline-md text-inverse-surface text-base flex items-center gap-2">
+          <span className="material-symbols-outlined text-[20px] text-on-surface-variant">table_rows</span>
+          Trade Journal
+        </h3>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-left border-collapse">
+          <thead>
+            <tr className="border-b border-white/5 bg-surface-container-low/50">
+              <th className="p-sm font-label-caps text-label-caps text-on-surface-variant font-medium">SYMBOL</th>
+              <th className="p-sm font-label-caps text-label-caps text-on-surface-variant font-medium">DIR</th>
+              <th className="p-sm font-label-caps text-label-caps text-on-surface-variant font-medium">ENTRY TIME</th>
+              <th className="p-sm font-label-caps text-label-caps text-on-surface-variant font-medium">EXIT TIME</th>
+              <th className="p-sm font-label-caps text-label-caps text-on-surface-variant font-medium">PHASE</th>
+              <th className="p-sm font-label-caps text-label-caps text-on-surface-variant font-medium text-right pr-lg">P&L</th>
+            </tr>
+          </thead>
+          <tbody className="font-data-md text-data-md text-inverse-surface">
+            {tradeHistory.length === 0 ? (
+              <tr><td colSpan={6} className="p-md text-center text-on-surface-variant text-sm">No trades recorded yet.</td></tr>
+            ) : (
+              tradeHistory.map(trade => {
+                const pnl = Number(trade.realized_pnl);
+                const entryTime = new Date(trade.entry_time).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' });
+                const exitTime = trade.exit_time ? new Date(trade.exit_time).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' }) : "—";
+                
+                return (
+                  <tr key={trade.id} className="border-b border-white/5 hover:bg-[#1E1E1E] transition-colors">
+                    <td className="p-sm">{trade.symbol}</td>
+                    <td className="p-sm">
+                      <span className={`px-2 py-0.5 rounded text-[11px] ${trade.direction === 'Long' ? 'bg-secondary-container/10 text-secondary-container' : 'bg-tertiary-container/10 text-tertiary-container'}`}>
+                        {trade.direction.toUpperCase()}
+                      </span>
+                    </td>
+                    <td className="p-sm text-on-surface-variant text-sm">{entryTime}</td>
+                    <td className="p-sm text-on-surface-variant text-sm">{exitTime}</td>
+                    <td className="p-sm text-on-surface-variant text-sm">{trade.phase}</td>
+                    <td className={`p-sm text-right pr-lg ${pnl > 0 ? 'text-green-500' : pnl < 0 ? 'text-red-500' : 'text-on-surface-variant'}`}>
+                      {pnl === 0 ? "—" : (pnl > 0 ? "+" : "") + pnl.toFixed(2)}
+                    </td>
+                  </tr>
+                );
+              })
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
 }
 
 // ─── Subcomponents ───────────────────────────────────────────────────────────
@@ -230,11 +330,11 @@ function StrategyBuilderTab({ config, onChange }: { config: UserStrategyConfig; 
 
 // ─── Main App ─────────────────────────────────────────────────────────────────
 
-type Tab = "basic" | "advanced" | "builder";
+type Tab = "dashboard" | "basic" | "advanced" | "builder";
 
 export default function App() {
   const [config, setConfig] = useState<UserStrategyConfig>(DEFAULT_CONFIG);
-  const [activeTab, setActiveTab] = useState<Tab>("builder");
+  const [activeTab, setActiveTab] = useState<Tab>("dashboard");
 
   const [sessionActive, setSessionActive] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string>("");
@@ -307,6 +407,48 @@ export default function App() {
   const winRatePct = systemStatus ? (Number(systemStatus.daily_stats.win_rate) * 100).toFixed(1) + "%" : "—";
   const dailyLossPct = systemStatus ? (Number(systemStatus.daily_loss_pct) * 100).toFixed(2) + "%" : "—";
 
+  const systemStatusPanel = (
+    <div className="flex flex-col xl:flex-row gap-gutter mb-lg">
+      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-sm flex-1">
+        <div className="bg-surface-container/60 backdrop-blur-[12px] border border-white/5 rounded-lg p-sm flex flex-col justify-between h-20 shadow-[0_4px_12px_rgba(0,0,0,0.1)]">
+          <span className="font-body-sm text-body-sm text-on-surface-variant">Equity</span>
+          <span className="font-data-lg text-data-lg text-inverse-surface text-right">${systemStatus ? Number(systemStatus.current_equity).toLocaleString(undefined, { minimumFractionDigits: 2 }) : "—"}</span>
+        </div>
+        <div className="bg-surface-container/60 backdrop-blur-[12px] border border-white/5 rounded-lg p-sm flex flex-col justify-between h-20 shadow-[0_4px_12px_rgba(0,0,0,0.1)]">
+          <span className="font-body-sm text-body-sm text-on-surface-variant">Daily P&L</span>
+          <span className={`font-data-lg text-data-lg text-right ${systemStatus && Number(systemStatus.daily_stats.realized_pnl) >= 0 ? "text-secondary-container" : "text-tertiary-container"}`}>
+            {systemStatus ? (Number(systemStatus.daily_stats.realized_pnl) >= 0 ? "+" : "") + "$" + Number(systemStatus.daily_stats.realized_pnl).toFixed(2) : "—"}
+          </span>
+        </div>
+        <div className="bg-surface-container/60 backdrop-blur-[12px] border border-white/5 rounded-lg p-sm flex flex-col justify-between h-20 shadow-[0_4px_12px_rgba(0,0,0,0.1)]">
+          <span className="font-body-sm text-body-sm text-on-surface-variant">Daily Loss Limit</span>
+          <div className="w-full bg-surface-container-highest h-1.5 rounded-full mt-2 mb-1 overflow-hidden">
+            <div className={`h-1.5 rounded-full ${systemStatus && Number(systemStatus.daily_loss_pct) > 0.04 ? "bg-tertiary-container" : "bg-primary-container"}`} style={{ width: systemStatus ? `${Math.min(100, Number(systemStatus.daily_loss_pct) * 100)}%` : "0%" }}></div>
+          </div>
+          <span className="font-data-md text-data-md text-inverse-surface text-right">{dailyLossPct}</span>
+        </div>
+        <div className="bg-surface-container/60 backdrop-blur-[12px] border border-white/5 rounded-lg p-sm flex flex-col justify-between h-20 shadow-[0_4px_12px_rgba(0,0,0,0.1)]">
+          <span className="font-body-sm text-body-sm text-on-surface-variant">Trades</span>
+          <span className="font-data-lg text-data-lg text-inverse-surface text-right">{systemStatus ? systemStatus.daily_stats.trade_count : "—"}</span>
+        </div>
+        <div className="bg-surface-container/60 backdrop-blur-[12px] border border-white/5 rounded-lg p-sm flex flex-col justify-between h-20 shadow-[0_4px_12px_rgba(0,0,0,0.1)]">
+          <span className="font-body-sm text-body-sm text-on-surface-variant">Win Rate</span>
+          <span className="font-data-lg text-data-lg text-inverse-surface text-right">{winRatePct}</span>
+        </div>
+        <div className="bg-surface-container/60 backdrop-blur-[12px] border border-white/5 rounded-lg p-sm flex flex-col justify-between h-20 shadow-[0_4px_12px_rgba(0,0,0,0.1)]">
+          <span className="font-body-sm text-body-sm text-on-surface-variant">Circuit Breaker</span>
+          <span className={`font-data-md text-data-md px-2 py-1 rounded w-max self-end mt-1 ${systemStatus?.circuit_breaker_active ? "text-tertiary-container bg-tertiary-container/10" : "text-secondary-container bg-secondary-container/10"}`}>
+            {systemStatus?.circuit_breaker_active ? "TRIPPED" : "ARMED"}
+          </span>
+        </div>
+      </div>
+      <div className={`flex items-center bg-surface-container/60 backdrop-blur-[12px] border border-white/5 rounded-lg px-md h-20 shrink-0 gap-sm ${!sessionActive && 'opacity-50 grayscale'}`}>
+        <div className={`w-3 h-3 rounded-full ${sessionActive ? 'bg-secondary-container shadow-[0_0_8px_rgba(47,248,1,0.6)] animate-pulse' : 'bg-outline-variant'}`}></div>
+        <span className={`font-label-caps text-label-caps tracking-widest ${sessionActive ? 'text-secondary-container' : 'text-outline-variant'}`}>{sessionActive ? 'LIVE' : 'IDLE'}</span>
+      </div>
+    </div>
+  );
+
   return (
     <>
       {/* TopAppBar */}
@@ -314,6 +456,9 @@ export default function App() {
         <div className="flex items-center gap-lg h-full">
           <span className="text-sm font-black tracking-widest text-white italic mr-4">QUANT_SANDBOX</span>
           <nav className="hidden md:flex items-end h-full gap-lg font-['Inter'] text-xs font-medium tracking-tight uppercase">
+            <button 
+              className={`pb-4 transition-all duration-200 active:scale-[0.97] ${activeTab === 'dashboard' ? 'text-[#0070FF] border-b-2 border-[#0070FF]' : 'text-gray-400 hover:text-white hover:bg-white/5'}`} 
+              onClick={() => setActiveTab('dashboard')}>Dashboard</button>
             <button 
               className={`pb-4 transition-all duration-200 active:scale-[0.97] ${activeTab === 'basic' ? 'text-[#0070FF] border-b-2 border-[#0070FF]' : 'text-gray-400 hover:text-white hover:bg-white/5'}`} 
               onClick={() => setActiveTab('basic')}>Basic Risk</button>
@@ -382,111 +527,82 @@ export default function App() {
           {errorMessage && <div className="mb-4 bg-error-container text-on-error-container p-sm rounded text-body-sm font-bold border border-error">Error: {errorMessage}</div>}
           {statusMessage && <div className="mb-4 bg-surface-container border border-white/10 p-sm rounded text-on-surface text-body-sm">{statusMessage}</div>}
 
-          {/* Top Control Panel / Status */}
-          <div className="flex flex-col xl:flex-row gap-gutter mb-lg">
-            <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-sm flex-1">
-              <div className="bg-surface-container/60 backdrop-blur-[12px] border border-white/5 rounded-lg p-sm flex flex-col justify-between h-20 shadow-[0_4px_12px_rgba(0,0,0,0.1)]">
-                <span className="font-body-sm text-body-sm text-on-surface-variant">Equity</span>
-                <span className="font-data-lg text-data-lg text-inverse-surface text-right">${systemStatus ? Number(systemStatus.current_equity).toLocaleString(undefined, { minimumFractionDigits: 2 }) : "—"}</span>
-              </div>
-              <div className="bg-surface-container/60 backdrop-blur-[12px] border border-white/5 rounded-lg p-sm flex flex-col justify-between h-20 shadow-[0_4px_12px_rgba(0,0,0,0.1)]">
-                <span className="font-body-sm text-body-sm text-on-surface-variant">Daily P&L</span>
-                <span className={`font-data-lg text-data-lg text-right ${systemStatus && Number(systemStatus.daily_stats.realized_pnl) >= 0 ? "text-secondary-container" : "text-tertiary-container"}`}>
-                  {systemStatus ? (Number(systemStatus.daily_stats.realized_pnl) >= 0 ? "+" : "") + "$" + Number(systemStatus.daily_stats.realized_pnl).toFixed(2) : "—"}
-                </span>
-              </div>
-              <div className="bg-surface-container/60 backdrop-blur-[12px] border border-white/5 rounded-lg p-sm flex flex-col justify-between h-20 shadow-[0_4px_12px_rgba(0,0,0,0.1)]">
-                <span className="font-body-sm text-body-sm text-on-surface-variant">Daily Loss Limit</span>
-                <div className="w-full bg-surface-container-highest h-1.5 rounded-full mt-2 mb-1 overflow-hidden">
-                  <div className={`h-1.5 rounded-full ${systemStatus && Number(systemStatus.daily_loss_pct) > 0.04 ? "bg-tertiary-container" : "bg-primary-container"}`} style={{ width: systemStatus ? `${Math.min(100, Number(systemStatus.daily_loss_pct) * 100)}%` : "0%" }}></div>
+          {activeTab === 'dashboard' ? (
+            <div className="flex flex-col gap-lg mb-lg">
+              <EquityCurve tradeHistory={tradeHistory} />
+              {systemStatusPanel}
+              <TradeJournal tradeHistory={tradeHistory} />
+            </div>
+          ) : (
+            <>
+              {systemStatusPanel}
+
+              {/* Strategy Builder Workspace */}
+              <div className="bg-surface-container/60 backdrop-blur-[12px] border border-white/5 rounded-lg flex flex-col mb-lg shadow-[0_4px_12px_rgba(0,0,0,0.1)]">
+                <div className="border-b border-white/5 p-md flex items-center justify-between">
+                  <h2 className="font-headline-md text-headline-md text-inverse-surface flex items-center gap-2 text-[18px]">
+                    <span className="material-symbols-outlined text-[20px] text-primary-container">account_tree</span>
+                    {activeTab === 'basic' ? "Basic Risk Config" : activeTab === 'advanced' ? "Advanced Config" : "Logic Builder"}
+                  </h2>
                 </div>
-                <span className="font-data-md text-data-md text-inverse-surface text-right">{dailyLossPct}</span>
+                
+                {activeTab === 'basic' && <BasicRiskTab config={config} onChange={setConfig} />}
+                {activeTab === 'advanced' && <AdvancedTab config={config} onChange={setConfig} />}
+                {activeTab === 'builder' && <StrategyBuilderTab config={config} onChange={setConfig} />}
               </div>
-              <div className="bg-surface-container/60 backdrop-blur-[12px] border border-white/5 rounded-lg p-sm flex flex-col justify-between h-20 shadow-[0_4px_12px_rgba(0,0,0,0.1)]">
-                <span className="font-body-sm text-body-sm text-on-surface-variant">Trades</span>
-                <span className="font-data-lg text-data-lg text-inverse-surface text-right">{systemStatus ? systemStatus.daily_stats.trade_count : "—"}</span>
+              
+              {/* Bottom Section: Trade History */}
+              <div className="bg-surface-container/60 backdrop-blur-[12px] border border-white/5 rounded-lg flex flex-col shadow-[0_4px_12px_rgba(0,0,0,0.1)]">
+                <div className="border-b border-white/5 p-md flex justify-between items-center">
+                  <h3 className="font-headline-md text-headline-md text-inverse-surface text-base flex items-center gap-2">
+                    <span className="material-symbols-outlined text-[20px] text-on-surface-variant">table_rows</span>
+                    Session Ledger {sessionActive && <span className="text-secondary-container text-xs ml-2"> (Polling)</span>}
+                  </h3>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse">
+                    <thead>
+                      <tr className="border-b border-white/5 bg-surface-container-low/50">
+                        <th className="p-sm font-label-caps text-label-caps text-on-surface-variant font-medium">TID</th>
+                        <th className="p-sm font-label-caps text-label-caps text-on-surface-variant font-medium">SYM</th>
+                        <th className="p-sm font-label-caps text-label-caps text-on-surface-variant font-medium">DIR</th>
+                        <th className="p-sm font-label-caps text-label-caps text-on-surface-variant font-medium text-right">ENTRY</th>
+                        <th className="p-sm font-label-caps text-label-caps text-on-surface-variant font-medium text-right">EXIT</th>
+                        <th className="p-sm font-label-caps text-label-caps text-on-surface-variant font-medium">PHASE</th>
+                        <th className="p-sm font-label-caps text-label-caps text-on-surface-variant font-medium text-right pr-lg">P&L</th>
+                      </tr>
+                    </thead>
+                    <tbody className="font-data-md text-data-md text-inverse-surface">
+                      {tradeHistory.length === 0 ? (
+                        <tr><td colSpan={7} className="p-md text-center text-on-surface-variant text-sm">No trades recorded yet. Start a session to begin.</td></tr>
+                      ) : (
+                        tradeHistory.map(trade => {
+                          const pnl = Number(trade.realized_pnl);
+                          return (
+                            <tr key={trade.id} className="border-b border-white/5 hover:bg-[#1E1E1E] transition-colors">
+                              <td className="p-sm text-on-surface-variant">{trade.id.slice(0, 8)}…</td>
+                              <td className="p-sm">{trade.symbol}</td>
+                              <td className="p-sm">
+                                <span className={`px-2 py-0.5 rounded text-[11px] ${trade.direction === 'Long' ? 'bg-secondary-container/10 text-secondary-container' : 'bg-tertiary-container/10 text-tertiary-container'}`}>
+                                  {trade.direction.toUpperCase()}
+                                </span>
+                              </td>
+                              <td className="p-sm text-right">{Number(trade.entry_price).toFixed(2)}</td>
+                              <td className="p-sm text-right">{trade.exit_price ? Number(trade.exit_price).toFixed(2) : "-"}</td>
+                              <td className={`p-sm ${trade.status === 'Open' ? 'text-primary-container' : 'text-on-surface-variant'}`}>{trade.status === 'Open' ? 'OPEN' : 'CLOSED'}</td>
+                              <td className={`p-sm text-right pr-lg ${pnl > 0 ? 'text-secondary-container' : pnl < 0 ? 'text-tertiary-container' : 'text-on-surface-variant'}`}>
+                                {pnl === 0 ? "—" : (pnl > 0 ? "+" : "") + pnl.toFixed(2)}
+                              </td>
+                            </tr>
+                          );
+                        })
+                      )}
+                    </tbody>
+                  </table>
+                </div>
               </div>
-              <div className="bg-surface-container/60 backdrop-blur-[12px] border border-white/5 rounded-lg p-sm flex flex-col justify-between h-20 shadow-[0_4px_12px_rgba(0,0,0,0.1)]">
-                <span className="font-body-sm text-body-sm text-on-surface-variant">Win Rate</span>
-                <span className="font-data-lg text-data-lg text-inverse-surface text-right">{winRatePct}</span>
-              </div>
-              <div className="bg-surface-container/60 backdrop-blur-[12px] border border-white/5 rounded-lg p-sm flex flex-col justify-between h-20 shadow-[0_4px_12px_rgba(0,0,0,0.1)]">
-                <span className="font-body-sm text-body-sm text-on-surface-variant">Circuit Breaker</span>
-                <span className={`font-data-md text-data-md px-2 py-1 rounded w-max self-end mt-1 ${systemStatus?.circuit_breaker_active ? "text-tertiary-container bg-tertiary-container/10" : "text-secondary-container bg-secondary-container/10"}`}>
-                  {systemStatus?.circuit_breaker_active ? "TRIPPED" : "ARMED"}
-                </span>
-              </div>
-            </div>
-            <div className={`flex items-center bg-surface-container/60 backdrop-blur-[12px] border border-white/5 rounded-lg px-md h-20 shrink-0 gap-sm ${!sessionActive && 'opacity-50 grayscale'}`}>
-              <div className={`w-3 h-3 rounded-full ${sessionActive ? 'bg-secondary-container shadow-[0_0_8px_rgba(47,248,1,0.6)] animate-pulse' : 'bg-outline-variant'}`}></div>
-              <span className={`font-label-caps text-label-caps tracking-widest ${sessionActive ? 'text-secondary-container' : 'text-outline-variant'}`}>{sessionActive ? 'LIVE' : 'IDLE'}</span>
-            </div>
-          </div>
-
-          {/* Strategy Builder Workspace */}
-          <div className="bg-surface-container/60 backdrop-blur-[12px] border border-white/5 rounded-lg flex flex-col mb-lg shadow-[0_4px_12px_rgba(0,0,0,0.1)]">
-            <div className="border-b border-white/5 p-md flex items-center justify-between">
-              <h2 className="font-headline-md text-headline-md text-inverse-surface flex items-center gap-2 text-[18px]">
-                <span className="material-symbols-outlined text-[20px] text-primary-container">account_tree</span>
-                {activeTab === 'basic' ? "Basic Risk Config" : activeTab === 'advanced' ? "Advanced Config" : "Logic Builder"}
-              </h2>
-            </div>
-            
-            {activeTab === 'basic' && <BasicRiskTab config={config} onChange={setConfig} />}
-            {activeTab === 'advanced' && <AdvancedTab config={config} onChange={setConfig} />}
-            {activeTab === 'builder' && <StrategyBuilderTab config={config} onChange={setConfig} />}
-          </div>
-
-          {/* Bottom Section: Trade History */}
-          <div className="bg-surface-container/60 backdrop-blur-[12px] border border-white/5 rounded-lg flex flex-col shadow-[0_4px_12px_rgba(0,0,0,0.1)]">
-            <div className="border-b border-white/5 p-md flex justify-between items-center">
-              <h3 className="font-headline-md text-headline-md text-inverse-surface text-base flex items-center gap-2">
-                <span className="material-symbols-outlined text-[20px] text-on-surface-variant">table_rows</span>
-                Session Ledger {sessionActive && <span className="text-secondary-container text-xs ml-2"> (Polling)</span>}
-              </h3>
-            </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse">
-                <thead>
-                  <tr className="border-b border-white/5 bg-surface-container-low/50">
-                    <th className="p-sm font-label-caps text-label-caps text-on-surface-variant font-medium">TID</th>
-                    <th className="p-sm font-label-caps text-label-caps text-on-surface-variant font-medium">SYM</th>
-                    <th className="p-sm font-label-caps text-label-caps text-on-surface-variant font-medium">DIR</th>
-                    <th className="p-sm font-label-caps text-label-caps text-on-surface-variant font-medium text-right">ENTRY</th>
-                    <th className="p-sm font-label-caps text-label-caps text-on-surface-variant font-medium text-right">EXIT</th>
-                    <th className="p-sm font-label-caps text-label-caps text-on-surface-variant font-medium">PHASE</th>
-                    <th className="p-sm font-label-caps text-label-caps text-on-surface-variant font-medium text-right pr-lg">P&L</th>
-                  </tr>
-                </thead>
-                <tbody className="font-data-md text-data-md text-inverse-surface">
-                  {tradeHistory.length === 0 ? (
-                    <tr><td colSpan={7} className="p-md text-center text-on-surface-variant text-sm">No trades recorded yet. Start a session to begin.</td></tr>
-                  ) : (
-                    tradeHistory.map(trade => {
-                      const pnl = Number(trade.realized_pnl);
-                      return (
-                        <tr key={trade.id} className="border-b border-white/5 hover:bg-[#1E1E1E] transition-colors">
-                          <td className="p-sm text-on-surface-variant">{trade.id.slice(0, 8)}…</td>
-                          <td className="p-sm">{trade.symbol}</td>
-                          <td className="p-sm">
-                            <span className={`px-2 py-0.5 rounded text-[11px] ${trade.direction === 'Long' ? 'bg-secondary-container/10 text-secondary-container' : 'bg-tertiary-container/10 text-tertiary-container'}`}>
-                              {trade.direction.toUpperCase()}
-                            </span>
-                          </td>
-                          <td className="p-sm text-right">{Number(trade.entry_price).toFixed(2)}</td>
-                          <td className="p-sm text-right">{trade.exit_price ? Number(trade.exit_price).toFixed(2) : "-"}</td>
-                          <td className={`p-sm ${trade.status === 'Open' ? 'text-primary-container' : 'text-on-surface-variant'}`}>{trade.status === 'Open' ? 'OPEN' : 'CLOSED'}</td>
-                          <td className={`p-sm text-right pr-lg ${pnl > 0 ? 'text-secondary-container' : pnl < 0 ? 'text-tertiary-container' : 'text-on-surface-variant'}`}>
-                            {pnl === 0 ? "—" : (pnl > 0 ? "+" : "") + pnl.toFixed(2)}
-                          </td>
-                        </tr>
-                      );
-                    })
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
+            </>
+          )}
         </main>
       </div>
     </>

@@ -42,7 +42,11 @@ pub fn run() {
     let app_state = state::AppState::new();
 
     tauri::Builder::default()
-        .plugin(tauri_plugin_log::Builder::new().build())
+        .plugin(
+            tauri_plugin_log::Builder::new()
+                .level(log::LevelFilter::Info)
+                .build(),
+        )
         // Register the managed state — accessible in every command via
         // `State<'_, AppState>`.
         .manage(app_state)

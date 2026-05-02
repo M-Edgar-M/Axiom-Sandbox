@@ -29,4 +29,4 @@ mod trade_record;
 pub use csv_logger::CsvLogger;
 pub use mock_tradfi_feed::MockCsvFeed;
 pub use trade_manager::TradeManager;
-pub use trade_record::{TradeDirection, TradeRecord, TradeStatus};
+pub use trade_record::{TradeDirection, TradePhase, TradeRecord, TradeStatus};

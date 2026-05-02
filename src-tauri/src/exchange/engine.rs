@@ -23,7 +23,7 @@ use tokio::sync::RwLock;
 use crate::types::{Position, Price, Volume};
 
 use super::config;
-use super::orders::ExecutionError;
+use super::orders::{ExecutionError, OcoOrderResult};
 pub use super::orders::OrderSide;
 use super::trade_manager::{ManagedPosition, ManagementAction, TradeState, evaluate_position};
 
@@ -411,6 +411,202 @@ async fn cancel_all_algo_orders(
     Ok(())
 }
 
+/// Place a native OCO order on Binance USD(S)-M Futures via `POST /fapi/v1/order/oco`.
+///
+/// This is the **Dead Man's Switch** primitive: a single Binance order list that
+/// atomically links the Stop-Loss and Take-Profit legs.  When either leg fills
+/// or is triggered, Binance automatically cancels the other — even if the local
+/// application has crashed.
+///
+/// Returns an `OcoOrderResult` containing:
+/// - `order_list_id`  — used to cancel the whole list in one call
+/// - `stop_loss_order_id` / `take_profit_order_id` — individual leg IDs
+///
+/// # Parameters
+/// - `side`                — the **closing** side (`SELL` for long, `BUY` for short)
+/// - `quantity`            — size of **each** leg (same for SL and TP)
+/// - `take_profit_price`   — limit price for the TP leg (TAKE_PROFIT_LIMIT)
+/// - `stop_loss_trigger`   — stop trigger price for the SL leg (STOP_LOSS_LIMIT)
+/// - `stop_loss_limit`     — limit price below (long) / above (short) the trigger
+#[allow(clippy::too_many_arguments)]
+async fn place_futures_oco(
+    api_key: &str,
+    api_secret: &str,
+    base_url: &str,
+    symbol: &str,
+    side: &str,
+    quantity: f64,
+    take_profit_price: f64,
+    stop_loss_trigger: f64,
+    stop_loss_limit: f64,
+) -> Result<OcoOrderResult, ExecutionError> {
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("system clock before UNIX epoch")
+        .as_millis();
+
+    // Binance USD-M Futures OCO endpoint.
+    // Both legs share the same quantity; the TP leg is a TAKE_PROFIT_LIMIT and
+    // the SL leg is a STOP_LOSS_LIMIT so fills guarantee a market-like execution.
+    let query = format!(
+        "symbol={symbol}&side={side}&quantity={quantity}\
+         &price={tp}&stopPrice={sl_trigger}&stopLimitPrice={sl_limit}\
+         &stopLimitTimeInForce=GTC&timestamp={ts}",
+        symbol = symbol,
+        side = side,
+        quantity = quantity,
+        tp = take_profit_price,
+        sl_trigger = stop_loss_trigger,
+        sl_limit = stop_loss_limit,
+        ts = timestamp,
+    );
+
+    let signature = hmac_sign(&query, api_secret);
+    let url = format!(
+        "{}/fapi/v1/order/oco?{}&signature={}",
+        base_url, query, signature
+    );
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(&url)
+        .header("X-MBX-APIKEY", api_key)
+        .send()
+        .await
+        .map_err(|e| ExecutionError::ExchangeError {
+            message: format!("OCO order request failed: {}", e),
+        })?;
+
+    let status = resp.status();
+    let body: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| ExecutionError::ExchangeError {
+            message: format!("OCO order JSON parse error: {}", e),
+        })?;
+
+    if !status.is_success() {
+        let code = body.get("code").and_then(|c| c.as_i64()).unwrap_or(-1);
+        let msg = body
+            .get("msg")
+            .and_then(|m| m.as_str())
+            .unwrap_or("unknown error");
+        return Err(ExecutionError::ExchangeError {
+            message: format!(
+                "Binance OCO HTTP {} — code {}: {}",
+                status, code, msg
+            ),
+        });
+    }
+
+    // Parse the order list ID.
+    let order_list_id = body
+        .get("orderListId")
+        .and_then(|v| v.as_u64())
+        .ok_or_else(|| ExecutionError::ExchangeError {
+            message: format!("No orderListId in OCO response: {}", body),
+        })?;
+
+    // The response contains an `orders` array with both legs.
+    // Binance returns them in submission order: [TP_leg, SL_leg] for futures OCO.
+    // We match by `type` field to be robust against ordering changes.
+    let orders = body
+        .get("orders")
+        .and_then(|o| o.as_array())
+        .ok_or_else(|| ExecutionError::ExchangeError {
+            message: format!("No orders array in OCO response: {}", body),
+        })?;
+
+    let mut tp_order_id: Option<u64> = None;
+    let mut sl_order_id: Option<u64> = None;
+
+    for leg in orders {
+        let otype = leg.get("type").and_then(|t| t.as_str()).unwrap_or("");
+        let oid = leg.get("orderId").and_then(|v| v.as_u64());
+        match otype {
+            "TAKE_PROFIT_LIMIT" | "TAKE_PROFIT" => tp_order_id = oid,
+            "STOP_LOSS_LIMIT" | "STOP_LOSS" => sl_order_id = oid,
+            _ => {}
+        }
+    }
+
+    // Fallback: if type-based matching yielded nothing (e.g., testnet quirks),
+    // assign positionally: first order = TP, second = SL.
+    if tp_order_id.is_none() || sl_order_id.is_none() {
+        warn!(
+            "[ENGINE] OCO leg types unrecognised; falling back to positional assignment. body={}",
+            body
+        );
+        let mut iter = orders.iter().filter_map(|o| o.get("orderId").and_then(|v| v.as_u64()));
+        tp_order_id = tp_order_id.or_else(|| iter.next());
+        sl_order_id = sl_order_id.or_else(|| iter.next());
+    }
+
+    let tp_id = tp_order_id.ok_or_else(|| ExecutionError::ExchangeError {
+        message: format!("Could not identify TP leg order ID in OCO response: {}", body),
+    })?;
+    let sl_id = sl_order_id.ok_or_else(|| ExecutionError::ExchangeError {
+        message: format!("Could not identify SL leg order ID in OCO response: {}", body),
+    })?;
+
+    Ok(OcoOrderResult {
+        order_list_id,
+        list_client_order_id: body
+            .get("listClientOrderId")
+            .and_then(|v| v.as_str())
+            .map(String::from),
+        symbol: symbol.to_string(),
+        take_profit_order_id: tp_id,
+        stop_loss_order_id: sl_id,
+        status: super::orders::OcoStatus::Executing,
+    })
+}
+
+/// Fetch open standard orders via `GET /fapi/v1/openOrders`.
+async fn fetch_open_orders(
+    api_key: &str,
+    api_secret: &str,
+    base_url: &str,
+    symbol: &str,
+) -> Result<Vec<serde_json::Value>, ExecutionError> {
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("system clock before UNIX epoch")
+        .as_millis();
+
+    let query = format!("symbol={}&timestamp={}", symbol, timestamp);
+    let signature = hmac_sign(&query, api_secret);
+
+    let url = format!(
+        "{}/fapi/v1/openOrders?{}&signature={}",
+        base_url, query, signature
+    );
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(&url)
+        .header("X-MBX-APIKEY", api_key)
+        .send()
+        .await
+        .map_err(|e| ExecutionError::ExchangeError {
+            message: format!("Failed to fetch open orders: {}", e),
+        })?;
+
+    let status = resp.status();
+    if !status.is_success() {
+        let text = resp.text().await.unwrap_or_default();
+        return Err(ExecutionError::ExchangeError {
+            message: format!("Binance openOrders HTTP {}: {}", status, text),
+        });
+    }
+
+    resp.json()
+        .await
+        .map_err(|e| ExecutionError::ExchangeError {
+            message: format!("Failed to parse open orders JSON: {}", e),
+        })
+}
+
 /// Fetch open conditional (algo) orders via `GET /fapi/v1/openAlgoOrders`.
 pub async fn get_open_algo_orders(
     api_key: &str,
@@ -755,52 +951,156 @@ impl ExecutionEngine {
             })??
         };
 
-        // 3. STOP_MARKET + TAKE_PROFIT_MARKET via Algo Service (async reqwest)
+        // 3. Native OCO order: STOP_LOSS_LIMIT + TAKE_PROFIT_LIMIT in a single
+        //    Binance order list.  When either leg fills, the exchange atomically
+        //    cancels the other — the Dead Man's Switch that protects capital even
+        //    if the local app crashes before the next price tick.
         let close_side_str = if is_long { "SELL" } else { "BUY" };
 
-        let sl_id = place_algo_order(
+        // The SL limit price sits slightly worse than the trigger so the limit
+        // order fills immediately on a stop-out (mirrors OcoOrderRequest logic).
+        let slippage_f64 = self.config.max_slippage.to_f64().unwrap_or(0.002);
+        let sl_limit_f64 = if is_long {
+            round_price_to_tick(
+                stop_loss * (Decimal::ONE - self.config.max_slippage),
+                filters.tick_size,
+            )
+        } else {
+            round_price_to_tick(
+                stop_loss * (Decimal::ONE + self.config.max_slippage),
+                filters.tick_size,
+            )
+        };
+        let _ = slippage_f64; // consumed via Decimal path above
+
+        let oco_result = place_futures_oco(
             &self.config.api_key,
             &self.config.api_secret,
             base_url,
             &sym,
             close_side_str,
-            "STOP_MARKET",
-            Some(sl_f64),
-            None,
+            qty_f64,
+            tp_f64,
+            sl_f64,
+            sl_limit_f64,
         )
         .await?;
 
         info!(
-            "[ENGINE] Stop loss placed for {}: order_id={} stop_price={}",
-            sym, sl_id, sl_f64
+            "[ENGINE] OCO (Dead Man's Switch) placed for {}: \
+             order_list_id={} sl_id={} tp_id={} sl_trigger={} tp={}",
+            sym,
+            oco_result.order_list_id,
+            oco_result.stop_loss_order_id,
+            oco_result.take_profit_order_id,
+            sl_f64,
+            tp_f64
         );
 
-        let tp_id = place_algo_order(
-            &self.config.api_key,
-            &self.config.api_secret,
-            base_url,
-            &sym,
-            close_side_str,
-            "TAKE_PROFIT_MARKET",
-            Some(tp_f64),
-            None,
-        )
-        .await?;
-
-        info!(
-            "[ENGINE] Take profit placed for {}: order_id={} stop_price={}",
-            sym, tp_id, tp_f64
-        );
-
-        // Store Binance order IDs in the position for later modification
-        position.stop_loss_order_id = Some(sl_id);
-        position.take_profit_order_id = Some(tp_id);
+        // Persist all three OCO identifiers so execute_first_tp / activate_trailing_stop
+        // can cancel the exact order list rather than guessing which orders are open.
+        position.oco_order_list_id = Some(oco_result.order_list_id);
+        position.stop_loss_order_id = Some(oco_result.stop_loss_order_id);
+        position.take_profit_order_id = Some(oco_result.take_profit_order_id);
         let _ = entry_id;
 
         let mut positions = self.positions.write().await;
         positions.insert(symbol.to_string(), position.clone());
 
         Ok(position)
+    }
+
+    // ── Reboot Recovery ────────────────────────────────────────────────────────
+    
+    /// Restores open positions from local CSV state.
+    /// Re-links them to active Binance orders if not in mock mode.
+    pub async fn restore_positions(&mut self, open_trades: Vec<crate::data::TradeRecord>) {
+        let mut positions = self.positions.write().await;
+        
+        for trade in open_trades {
+            let symbol = trade.symbol.clone();
+            let direction = match trade.direction {
+                crate::data::TradeDirection::Long => Position::Long,
+                crate::data::TradeDirection::Short => Position::Short,
+            };
+
+            let mut position = ManagedPosition::new(
+                &symbol,
+                direction,
+                trade.entry_price,
+                trade.stop_loss,
+                trade.take_profit,
+                trade.position_size,
+                trade.atr_value,
+            );
+
+            // Map TradePhase to TradeState
+            position.state = match trade.phase {
+                crate::data::TradePhase::Phase1 => TradeState::Open,
+                crate::data::TradePhase::Phase2 => TradeState::FirstTpHit,
+                crate::data::TradePhase::Phase3 => TradeState::TrailingActive,
+            };
+
+            position.opened_at = trade.entry_time;
+            position.realized_pnl = trade.realized_pnl;
+            
+            if !self.mock_mode {
+                let base_url = algo_base_url(self.config.testnet);
+                
+                // Fetch standard open orders (for OCO legs)
+                if let Ok(orders) = fetch_open_orders(&self.config.api_key, &self.config.api_secret, base_url, &symbol).await {
+                    for order in orders {
+                        if let (Some(list_id), Some(order_id), Some(otype)) = (
+                            order.get("orderListId").and_then(|v| v.as_u64()),
+                            order.get("orderId").and_then(|v| v.as_u64()),
+                            order.get("type").and_then(|v| v.as_str()),
+                        ) {
+                            if list_id > 0 {
+                                position.oco_order_list_id = Some(list_id);
+                                if otype == "STOP_LOSS_LIMIT" || otype == "STOP_LOSS" {
+                                    position.stop_loss_order_id = Some(order_id);
+                                } else if otype == "TAKE_PROFIT_LIMIT" || otype == "TAKE_PROFIT" {
+                                    position.take_profit_order_id = Some(order_id);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // If in Phase 3, we also need to find the trailing stop order (algo order)
+                if position.state == TradeState::TrailingActive {
+                    if let Ok(json_str) = get_open_algo_orders(&self.config.api_key, &self.config.api_secret, base_url, &symbol).await {
+                        if let Ok(algo_orders) = serde_json::from_str::<Vec<serde_json::Value>>(&json_str) {
+                            for order in algo_orders {
+                                if let (Some(order_id), Some(otype)) = (
+                                    order.get("orderId").or_else(|| order.get("algoId")).and_then(|v| v.as_u64()),
+                                    order.get("type").or_else(|| order.get("origType")).and_then(|v| v.as_str()),
+                                ) {
+                                    if otype == "TRAILING_STOP_MARKET" {
+                                        position.trailing_stop_order_id = Some(order_id);
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                info!("[ENGINE] Restored position {}: state={:?} oco_list={:?} sl_id={:?} tp_id={:?} trail_id={:?}", 
+                    symbol, position.state, position.oco_order_list_id, position.stop_loss_order_id, position.take_profit_order_id, position.trailing_stop_order_id);
+            } else {
+                // In mock mode, assign dummy IDs to simulate linked orders
+                position.oco_order_list_id = Some(10000);
+                position.stop_loss_order_id = Some(10001);
+                position.take_profit_order_id = Some(10002);
+                if position.state == TradeState::TrailingActive {
+                    position.trailing_stop_order_id = Some(10003);
+                }
+                info!("[ENGINE] Restored mock position {}: state={:?}", symbol, position.state);
+            }
+            
+            positions.insert(symbol, position);
+        }
     }
 
     // ── Monitor ──────────────────────────────────────────────────────────────
@@ -947,46 +1247,57 @@ impl ExecutionEngine {
                 })??;
             }
 
-            // 3. New breakeven STOP_MARKET + TAKE_PROFIT_MARKET (algo orders — async)
+            // 3. Replace the initial OCO with a new one anchored at breakeven SL.
+            //    Using a native OCO again ensures the Dead Man's Switch remains
+            //    active for the reduced position size through Phase 2.
             let close_side_str = if is_long { "SELL" } else { "BUY" };
 
-            let new_sl_id = place_algo_order(
+            // Recalculate SL limit for the new breakeven level.
+            let new_sl_limit_f64 = if is_long {
+                round_price_to_tick(
+                    new_stop_loss * (Decimal::ONE - self.config.max_slippage),
+                    filters.tick_size,
+                )
+            } else {
+                round_price_to_tick(
+                    new_stop_loss * (Decimal::ONE + self.config.max_slippage),
+                    filters.tick_size,
+                )
+            };
+
+            // The partial close reduced the quantity; use the remaining size.
+            let remaining_qty_f64 =
+                round_qty_to_step(position.current_quantity - quantity_to_close, filters.step_size);
+
+            let new_oco = place_futures_oco(
                 &self.config.api_key,
                 &self.config.api_secret,
                 base_url,
                 &sym,
                 close_side_str,
-                "STOP_MARKET",
-                Some(new_sl_f64),
-                None,
+                remaining_qty_f64,
+                new_tp_f64,
+                new_sl_f64,
+                new_sl_limit_f64,
             )
             .await?;
 
             info!(
-                "[ENGINE] Breakeven SL for {}: order_id={} stop={}",
-                sym, new_sl_id, new_sl_f64
+                "[ENGINE] Phase-2 OCO (Dead Man's Switch) for {}: \
+                 order_list_id={} sl_id={} tp_id={} breakeven_sl={} tp={}",
+                sym,
+                new_oco.order_list_id,
+                new_oco.stop_loss_order_id,
+                new_oco.take_profit_order_id,
+                new_sl_f64,
+                new_tp_f64
             );
 
-            let new_tp_id = place_algo_order(
-                &self.config.api_key,
-                &self.config.api_secret,
-                base_url,
-                &sym,
-                close_side_str,
-                "TAKE_PROFIT_MARKET",
-                Some(new_tp_f64),
-                None,
-            )
-            .await?;
-
-            info!(
-                "[ENGINE] New TP (Phase 2) for {}: order_id={} stop={}",
-                sym, new_tp_id, new_tp_f64
-            );
-
-            // Update tracked order IDs
-            position.stop_loss_order_id = Some(new_sl_id);
-            position.take_profit_order_id = Some(new_tp_id);
+            // Update all three OCO identifiers so activate_trailing_stop / close_position
+            // can cancel precisely the right order list.
+            position.oco_order_list_id = Some(new_oco.order_list_id);
+            position.stop_loss_order_id = Some(new_oco.stop_loss_order_id);
+            position.take_profit_order_id = Some(new_oco.take_profit_order_id);
         }
 
         // Calculate realized P&L for the closed portion (approximation via new_stop_loss)

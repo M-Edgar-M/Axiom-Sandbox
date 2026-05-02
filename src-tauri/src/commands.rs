@@ -192,6 +192,24 @@ pub async fn start_mock_session(
         }
     } // lock released here
 
+    // ── Restore Positions via TradeManager ────────────────────────────────
+    let trade_manager = match crate::data::TradeManager::default_path() {
+        Ok(tm) => tm,
+        Err(e) => {
+            let msg = format!("Failed to initialize TradeManager for recovery: {}", e);
+            error!("[SESSION] {}", msg);
+            return Err(msg);
+        }
+    };
+    
+    let open_trades = trade_manager.active_trades().to_vec();
+    if !open_trades.is_empty() {
+        info!("[SESSION] Restoring {} open trades from CSV...", open_trades.len());
+        if let Some(engine) = state.engine.lock().await.as_mut() {
+            engine.restore_positions(open_trades).await;
+        }
+    }
+
     // ── Mark session active ───────────────────────────────────────────────
     state
         .session_active
