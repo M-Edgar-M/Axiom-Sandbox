@@ -153,6 +153,12 @@ function BasicRiskTab({ config, onChange }: { config: UserStrategyConfig; onChan
   const { risk } = config;
   const setRisk = (field: keyof typeof config.risk, value: number) => onChange(prev => ({ ...prev, risk: { ...prev.risk, [field]: value } }));
 
+  const [simulatedAccountSize, setSimulatedAccountSize] = useState(10000);
+  const [simulatedStopLoss, setSimulatedStopLoss] = useState(50);
+
+  const maxLoss = simulatedAccountSize * risk.risk_per_trade;
+  const sharesToBuy = Math.floor(maxLoss / simulatedStopLoss);
+
   return (
     <div className="flex flex-col gap-sm p-lg">
       <div className="flex flex-col gap-xs mb-md">
@@ -178,6 +184,21 @@ function BasicRiskTab({ config, onChange }: { config: UserStrategyConfig; onChan
             </div>
             <div className="flex gap-4 items-center">
               <input type="range" className="flex-1 accent-primary-container" min={0.005} max={0.05} step={0.001} value={risk.risk_per_trade} onChange={(e) => setRisk("risk_per_trade", Number(e.target.value))} />
+              <input 
+                type="number" 
+                className="bg-surface-container border border-outline-variant text-inverse-surface rounded p-1 w-20 text-right text-sm" 
+                min={0.005} 
+                max={0.05} 
+                step={0.001} 
+                value={risk.risk_per_trade} 
+                onChange={(e) => setRisk("risk_per_trade", Number(e.target.value))} 
+                onBlur={(e) => {
+                  let val = Number(e.target.value);
+                  if (val > 0.05) val = 0.05;
+                  if (val < 0.005) val = 0.005;
+                  setRisk("risk_per_trade", val);
+                }} 
+              />
             </div>
           </div>
 
@@ -204,6 +225,41 @@ function BasicRiskTab({ config, onChange }: { config: UserStrategyConfig; onChan
               <input type="range" className="flex-1 accent-secondary-container" min={0.1} max={1.0} step={0.05} value={risk.profit_taking_pct} onChange={(e) => setRisk("profit_taking_pct", Number(e.target.value))} />
             </div>
           </div>
+        </div>
+      </fieldset>
+
+      <fieldset className="border border-white/5 rounded-lg p-md bg-[#0A0A0A] mt-md shadow-[0_4px_12px_rgba(0,0,0,0.2)]">
+        <legend className="font-label-caps text-label-caps text-[#00FFAA] px-2 flex items-center gap-2 drop-shadow-[0_0_8px_rgba(0,255,170,0.5)]">
+          <span className="material-symbols-outlined text-[16px]">calculate</span>
+          Position Sizing Calculator
+        </legend>
+        
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-lg mt-sm mb-md">
+          <div className="flex flex-col gap-xs">
+            <label className="font-body-sm text-body-sm text-on-surface-variant">Account Balance ($)</label>
+            <input 
+              type="number" 
+              className="bg-surface-container border border-outline-variant text-inverse-surface rounded focus:ring-primary-container focus:border-primary-container font-body-md p-2"
+              value={simulatedAccountSize}
+              onChange={(e) => setSimulatedAccountSize(Number(e.target.value))}
+            />
+          </div>
+          <div className="flex flex-col gap-xs">
+            <label className="font-body-sm text-body-sm text-on-surface-variant">Stop Loss Distance ($)</label>
+            <input 
+              type="number" 
+              className="bg-surface-container border border-outline-variant text-inverse-surface rounded focus:ring-primary-container focus:border-primary-container font-body-md p-2"
+              value={simulatedStopLoss}
+              onChange={(e) => setSimulatedStopLoss(Number(e.target.value))}
+            />
+          </div>
+        </div>
+        
+        <div className="bg-[#121212] p-md rounded border border-[#00FFAA]/20">
+          <p className="text-[#00FFAA] font-body-lg text-[16px] leading-relaxed drop-shadow-[0_0_8px_rgba(0,255,170,0.3)]">
+            To risk exactly <span className="text-[#0070FF] font-bold drop-shadow-[0_0_4px_rgba(0,112,255,0.5)]">{fmtPct(risk.risk_per_trade)}</span>, you can tolerate a maximum loss of <span className="text-[#0070FF] font-bold drop-shadow-[0_0_4px_rgba(0,112,255,0.5)]">${maxLoss.toFixed(2)}</span>. 
+            If your stop loss is <span className="text-[#0070FF] font-bold drop-shadow-[0_0_4px_rgba(0,112,255,0.5)]">${simulatedStopLoss.toFixed(2)}</span> away, you should buy exactly <span className="text-[#0070FF] font-bold drop-shadow-[0_0_4px_rgba(0,112,255,0.5)]">{sharesToBuy}</span> shares/contracts.
+          </p>
         </div>
       </fieldset>
     </div>
@@ -337,11 +393,18 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<Tab>("dashboard");
 
   const [sessionActive, setSessionActive] = useState(false);
+  const [isLiveMode, setIsLiveMode] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string>("");
   const [errorMessage, setErrorMessage] = useState<string>("");
 
   const [systemStatus, setSystemStatus] = useState<SystemStatus | null>(null);
   const [tradeHistory, setTradeHistory] = useState<TradeRecordDto[]>([]);
+
+  const [isMuted, setIsMuted] = useState(false);
+  const openSound = useRef(new Audio('/open.mp3'));
+  const profitSound = useRef(new Audio('/profit.mp3'));
+  const lossSound = useRef(new Audio('/loss.mp3'));
+  const prevTradesRef = useRef<TradeRecordDto[]>([]);
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -378,11 +441,35 @@ export default function App() {
     };
   }, [sessionActive, poll]);
 
+  useEffect(() => {
+    if (tradeHistory.length > prevTradesRef.current.length) {
+      if (!isMuted) openSound.current.play().catch(e => console.log(e));
+    }
+
+    tradeHistory.forEach(trade => {
+      if (trade.status === "Closed") {
+        const prevTrade = prevTradesRef.current.find(t => t.id === trade.id);
+        if (prevTrade && prevTrade.status === "Open") {
+          const pnl = Number(trade.realized_pnl);
+          if (!isMuted) {
+            if (pnl > 0) {
+              profitSound.current.play().catch(e => console.log(e));
+            } else {
+              lossSound.current.play().catch(e => console.log(e));
+            }
+          }
+        }
+      }
+    });
+
+    prevTradesRef.current = tradeHistory;
+  }, [tradeHistory, isMuted]);
+
   async function handleStartSession() {
     setErrorMessage("");
     setStatusMessage("Starting session…");
     try {
-      const result = await invoke<string>("start_mock_session", { config });
+      const result = await invoke<string>("start_mock_session", { config, isLiveMode });
       setSessionActive(true);
       setStatusMessage(result);
     } catch (err) {
@@ -471,17 +558,33 @@ export default function App() {
           </nav>
         </div>
         <div className="flex items-center gap-md">
+          {/* Mock vs Live Toggle */}
           <button 
-            className="bg-secondary-container text-on-secondary-container px-4 py-2 rounded font-label-caps text-label-caps hover:bg-secondary-fixed-dim transition-colors shadow-[0_0_10px_rgba(47,248,1,0.2)] disabled:opacity-50 disabled:cursor-not-allowed"
+            className={`px-4 py-2 rounded font-label-caps text-label-caps transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed ${
+              isLiveMode 
+                ? 'bg-red-600 text-white hover:bg-red-500 shadow-[0_0_10px_rgba(220,38,38,0.4)]' 
+                : 'bg-blue-600 text-white hover:bg-blue-500 shadow-[0_0_10px_rgba(37,99,235,0.4)]'
+            }`}
+            onClick={() => setIsLiveMode(!isLiveMode)}
+            disabled={sessionActive}
+          >
+            {isLiveMode ? 'LIVE TRADING' : 'MOCK MODE'}
+          </button>
+
+          <button 
+            className={`${isLiveMode ? 'bg-red-600 shadow-[0_0_10px_rgba(220,38,38,0.2)] hover:bg-red-500 text-white' : 'bg-secondary-container text-on-secondary-container hover:bg-secondary-fixed-dim shadow-[0_0_10px_rgba(47,248,1,0.2)]'} px-4 py-2 rounded font-label-caps text-label-caps transition-colors disabled:opacity-50 disabled:cursor-not-allowed`}
             onClick={handleStartSession}
             disabled={sessionActive}
-          >START MOCK TRADING</button>
+          >{isLiveMode ? 'START LIVE TRADING' : 'START MOCK TRADING'}</button>
           <button 
             className="border border-outline-variant text-on-surface-variant px-4 py-2 rounded font-label-caps text-label-caps hover:bg-white/5 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             onClick={handleStopSession}
             disabled={!sessionActive}
           >STOP SESSION</button>
           <div className="h-6 w-px bg-outline-variant mx-2"></div>
+          <button onClick={() => setIsMuted(!isMuted)} className="text-on-surface-variant hover:text-white transition-colors">
+            <span className="material-symbols-outlined text-[20px]">{isMuted ? 'volume_off' : 'volume_up'}</span>
+          </button>
           <button className="text-on-surface-variant hover:text-white transition-colors"><span className="material-symbols-outlined text-[20px]">sensors</span></button>
           <button className="text-on-surface-variant hover:text-white transition-colors"><span className="material-symbols-outlined text-[20px]">settings</span></button>
           <button className="text-on-surface-variant hover:text-white transition-colors"><span className="material-symbols-outlined text-[20px]">account_circle</span></button>

@@ -16,6 +16,7 @@
 use log::{error, info, warn};
 use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
+use rust_decimal::prelude::ToPrimitive;
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
@@ -128,6 +129,7 @@ impl From<&DailyStats> for DailyStatsDto {
 #[tauri::command]
 pub async fn start_mock_session(
     config: UserStrategyConfig,
+    is_live_mode: bool,
     state: State<'_, AppState>,
 ) -> Result<String, String> {
     // ── Guard: reject if a session is already running ─────────────────────
@@ -141,10 +143,26 @@ pub async fn start_mock_session(
         return Err(format!("Invalid strategy config:\n{}", errors.join("\n")));
     }
 
-    info!("[IPC] start_mock_session — strategy: {}", config.name);
+    info!("[IPC] start_mock_session — strategy: {}, live_mode: {}", config.name, is_live_mode);
 
-    // ── Build the mock engine (reads API keys from env, always testnet) ───
-    state.build_mock_engine().await;
+    // ── Build the engine (mock or live) ───────────────────────────────────
+    let api_key = std::env::var("BINANCE_API_KEY").unwrap_or_default();
+    let api_secret = std::env::var("BINANCE_API_SECRET").unwrap_or_default();
+    
+    let engine_config = crate::exchange::EngineConfig {
+        api_key,
+        api_secret,
+        testnet: !is_live_mode,
+        symbols: vec!["BTCUSDT".to_string()],
+        ..Default::default()
+    };
+    
+    let engine = if is_live_mode {
+        crate::exchange::ExecutionEngine::new(engine_config).await
+    } else {
+        crate::exchange::ExecutionEngine::new_mock()
+    };
+    *state.engine.lock().await = Some(engine);
 
     // ── Extract required intervals from config ────────────────────────────
     let mut required_intervals = std::collections::HashSet::new();
@@ -193,7 +211,7 @@ pub async fn start_mock_session(
     } // lock released here
 
     // ── Restore Positions via TradeManager ────────────────────────────────
-    let trade_manager = match crate::data::TradeManager::default_path() {
+    let mut trade_manager = match crate::data::TradeManager::default_path() {
         Ok(tm) => tm,
         Err(e) => {
             let msg = format!("Failed to initialize TradeManager for recovery: {}", e);
@@ -226,6 +244,7 @@ pub async fn start_mock_session(
         let evaluator = RuleEvaluator::new();
         let mut initialized = false;
         let mut last_price: Option<Decimal> = None;
+        let mut last_traded_candle: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
 
         // The loop runs until the shutdown flag is set.
         loop {
@@ -284,6 +303,17 @@ pub async fn start_mock_session(
                         Ok(true) => {
                             log::info!("[EVALUATOR] Signal generated: conditions met!");
 
+                            let symbol = "BTCUSDT";
+
+                            // Task 2: Duplicate Trade Guard
+                            let current_candle_time = market_data.candles_15m.last().map(|c| c.timestamp.timestamp_millis() as u64).unwrap_or(0);
+                            if let Some(&last_time) = last_traded_candle.get(symbol) {
+                                if last_time == current_candle_time {
+                                    log::debug!("[TRADE] Duplicate signal for candle {}, skipping.", current_candle_time);
+                                    continue;
+                                }
+                            }
+
                             // ── Execute mock trade ───────────────────────
                             let entry_price = last_price.unwrap_or_else(|| {
                                 // Fallback: use the last closed candle's close price
@@ -311,8 +341,51 @@ pub async fn start_mock_session(
                                 continue;
                             }
 
-                            let atr_15m = stop_distance; // Simplified ATR proxy for mock
-                            let atr_4h = stop_distance;  // Same for mock — ratio = 1.0
+                            // Task 1: Check MAX_OPEN_POSITIONS using the properly updated active_trades
+                            if trade_manager.active_trades().len() >= crate::exchange::config::MAX_OPEN_POSITIONS {
+                                log::warn!("[TRADE] MAX_OPEN_POSITIONS guard hit — skipping entry");
+                                continue;
+                            }
+
+                            // Task 3: Calculate indicators dynamically for logging
+                            let mut atr_15m = stop_distance;
+                            let atr_4h = stop_distance;
+                            let mut rsi_val = dec!(0);
+                            let mut adx_val = dec!(0);
+
+                            let closes: Vec<f64> = market_data.candles_15m.iter().map(|c| c.close.to_f64().unwrap_or(0.0)).collect();
+                            let highs: Vec<f64> = market_data.candles_15m.iter().map(|c| c.high.to_f64().unwrap_or(0.0)).collect();
+                            let lows: Vec<f64> = market_data.candles_15m.iter().map(|c| c.low.to_f64().unwrap_or(0.0)).collect();
+
+                            if closes.len() > 14 {
+                                let mut tr_sum = 0.0;
+                                let mut gains = 0.0;
+                                let mut losses = 0.0;
+                                for i in 1..15 {
+                                    let idx = closes.len() - i;
+                                    let tr1 = highs[idx] - lows[idx];
+                                    let tr2 = (highs[idx] - closes[idx - 1]).abs();
+                                    let tr3 = (lows[idx] - closes[idx - 1]).abs();
+                                    tr_sum += tr1.max(tr2).max(tr3);
+
+                                    let diff = closes[idx] - closes[idx - 1];
+                                    if diff > 0.0 { gains += diff; } else { losses -= diff; }
+                                }
+                                if let Some(atr) = rust_decimal::Decimal::from_f64_retain(tr_sum / 14.0) {
+                                    atr_15m = atr;
+                                }
+
+                                let avg_loss = losses / 14.0;
+                                if avg_loss == 0.0 {
+                                    rsi_val = dec!(100);
+                                } else {
+                                    let rs = (gains / 14.0) / avg_loss;
+                                    if let Some(rsi) = rust_decimal::Decimal::from_f64_retain(100.0 - (100.0 / (1.0 + rs))) {
+                                        rsi_val = rsi;
+                                    }
+                                }
+                                adx_val = dec!(25); // Simplified ADX proxy
+                            }
 
                             match rm.calculate_position_size(
                                 entry_price,
@@ -323,35 +396,38 @@ pub async fn start_mock_session(
                             ) {
                                 Ok(sizing) => {
                                     let trade_id = format!("mock-{}", uuid::Uuid::new_v4());
-                                    let trade = TradeRecord::new(
+                                    
+                                    // Drop the risk manager lock before performing I/O via trade_manager
+                                    drop(rm);
+
+                                    // Use TradeManager to open trade, log to CSV, and update active_trades
+                                    match trade_manager.open_trade(
                                         &trade_id,
-                                        "BTCUSDT",
+                                        symbol,
                                         TradeDirection::Long,
                                         entry_price,
                                         stop_loss,
                                         take_profit,
                                         sizing.size,
                                         atr_15m,
-                                        dec!(0), // RSI placeholder
-                                        dec!(0), // ADX placeholder
-                                        "MockSignal".to_string(),
-                                    );
+                                        rsi_val,
+                                        adx_val,
+                                        "LiveSignal".to_string(),
+                                    ) {
+                                        Ok(trade) => {
+                                            // Update last_traded_candle since trade successfully opened
+                                            last_traded_candle.insert(symbol.to_string(), current_candle_time);
 
-                                    // Log to CSV
-                                    match CsvLogger::new("trades_log.csv") {
-                                        Ok(logger) => {
-                                            if let Err(e) = logger.append_record(&trade) {
-                                                log::error!("[TRADE] CSV write failed: {}", e);
-                                            }
+                                            log::info!(
+                                                "[TRADE] ✅ ENTRY: {} {} @ {} | SL={} TP={} | Size={}",
+                                                trade.direction, trade.symbol, entry_price,
+                                                stop_loss, take_profit, sizing.size
+                                            );
                                         }
-                                        Err(e) => log::error!("[TRADE] CSV open failed: {}", e),
+                                        Err(e) => {
+                                            log::error!("[TRADE] Failed to open trade in TradeManager: {}", e);
+                                        }
                                     }
-
-                                    log::info!(
-                                        "[TRADE] ✅ ENTRY: {} {} @ {} | SL={} TP={} | Size={}",
-                                        trade.direction, trade.symbol, entry_price,
-                                        stop_loss, take_profit, sizing.size
-                                    );
                                 }
                                 Err(e) => {
                                     log::warn!("[TRADE] Position sizing rejected: {}", e);
