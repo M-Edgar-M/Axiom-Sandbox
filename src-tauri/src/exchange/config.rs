@@ -31,7 +31,7 @@ pub const TOP_COINS: [&str; 10] = [
     "SOLUSDT",
     "DOGEUSDT",
     "DOTUSDT",
-    "MATICUSDT",
+    "1000BONKUSDT",
     "LTCUSDT",
 ];
 

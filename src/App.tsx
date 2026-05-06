@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { SettingsModal } from "./SettingsModal";
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 import type {
   UserStrategyConfig,
@@ -421,6 +422,9 @@ export default function App() {
   const [systemStatus, setSystemStatus] = useState<SystemStatus | null>(null);
   const [tradeHistory, setTradeHistory] = useState<TradeRecordDto[]>([]);
 
+  // ── Settings modal ─────────────────────────────────────────────────────────
+  const [settingsOpen, setSettingsOpen] = useState(false);
+
   const [isMuted, setIsMuted] = useState(false);
   const openSound = useRef(new Audio('/open.mp3'));
   const profitSound = useRef(new Audio('/profit.mp3'));
@@ -607,7 +611,15 @@ export default function App() {
             <span className="material-symbols-outlined text-[20px]">{isMuted ? 'volume_off' : 'volume_up'}</span>
           </button>
           <button className="text-on-surface-variant hover:text-white transition-colors"><span className="material-symbols-outlined text-[20px]">sensors</span></button>
-          <button className="text-on-surface-variant hover:text-white transition-colors"><span className="material-symbols-outlined text-[20px]">settings</span></button>
+          <button
+            id="nav-settings-btn"
+            onClick={() => setSettingsOpen(true)}
+            className="text-on-surface-variant hover:text-white transition-colors"
+            aria-label="Open API settings"
+            title="API Credentials"
+          >
+            <span className="material-symbols-outlined text-[20px]">settings</span>
+          </button>
           <button className="text-on-surface-variant hover:text-white transition-colors"><span className="material-symbols-outlined text-[20px]">account_circle</span></button>
         </div>
       </header>
@@ -749,6 +761,9 @@ export default function App() {
           )}
         </main>
       </div>
+
+      {/* Settings / API Credentials Modal */}
+      <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />
     </>
   );
 }

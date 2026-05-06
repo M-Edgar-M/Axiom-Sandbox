@@ -56,6 +56,7 @@ pub fn run() {
             commands::stop_session,
             commands::get_trade_history,
             commands::get_system_status,
+            commands::save_api_credentials,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Axiom Sandbox");

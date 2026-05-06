@@ -187,24 +187,31 @@ pub async fn start_mock_session(
     }
 
     // ── Extract symbols from config entry rules for WS subscriptions ──────
-    let symbol = "BTCUSDT".to_string(); // Phase 4: derive from config rules.
-    let symbols = vec![symbol.clone()];
+    // BTCUSDT provides the trend-alignment reference for the evaluator.
+    // 1000BONKUSDT is the active trading symbol for high-volatility OCO stress testing.
+    let btc_symbol = "BTCUSDT".to_string();
+    let trade_symbol = "1000BONKUSDT".to_string();
+    let symbols = vec![btc_symbol.clone(), trade_symbol.clone()];
     let intervals = vec!["15m".to_string(), "1h".to_string(), "4h".to_string()];
 
-    // ── Add Historical Backfill ───────────────────────────────────────────
-    let mut market_data = MarketData::new(&symbol);
-    for &interval in &required_intervals {
-        info!("[BACKFILL] Fetching historical data for {} {:?}", symbol, interval);
-        match crate::data::backfill::fetch_historical_data(&symbol, interval).await {
-            Ok(candles) => {
-                market_data.candles_mut(interval).extend(candles);
-            }
-            Err(e) => {
-                let err_msg = format!("Failed to fetch historical data: {}", e);
-                error!("[BACKFILL] {}", err_msg);
-                return Err(err_msg);
+    // ── Add Historical Backfill (per-symbol) ──────────────────────────────
+    let mut market_data_map: std::collections::HashMap<String, MarketData> = std::collections::HashMap::new();
+    for sym in &symbols {
+        let mut md = MarketData::new(sym);
+        for &interval in &required_intervals {
+            info!("[BACKFILL] Fetching historical data for {} {:?}", sym, interval);
+            match crate::data::backfill::fetch_historical_data(sym, interval).await {
+                Ok(candles) => {
+                    md.candles_mut(interval).extend(candles);
+                }
+                Err(e) => {
+                    let err_msg = format!("Failed to fetch historical data for {}: {}", sym, e);
+                    error!("[BACKFILL] {}", err_msg);
+                    return Err(err_msg);
+                }
             }
         }
+        market_data_map.insert(sym.clone(), md);
     }
 
     // ── Start the WebSocket stack ─────────────────────────────────────────
@@ -250,12 +257,15 @@ pub async fn start_mock_session(
     let session_flag = state.session_active.clone();
     let strategy_config = config.clone();
     let risk_manager = state.risk_manager.clone();
+    // The active trading symbol passed into the loop closure.
+    let active_trade_symbol = trade_symbol.clone();
 
     tokio::spawn(async move {
         info!("[SESSION] Execution loop started");
         let evaluator = RuleEvaluator::new();
         let mut initialized = false;
-        let mut last_price: Option<Decimal> = None;
+        // Per-symbol last price from aggTrade ticks.
+        let mut last_prices: std::collections::HashMap<String, Decimal> = std::collections::HashMap::new();
         let mut last_traded_candle: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
 
         // The loop runs until the shutdown flag is set.
@@ -265,15 +275,16 @@ pub async fn start_mock_session(
                 break;
             }
 
-            // ── Drain price ticks (non-blocking) ─────────────────────────
+            // ── Drain price ticks (non-blocking, per-symbol) ─────────────
             while let Ok(tick) = price_rx.try_recv() {
                 log::trace!("[SESSION] Price tick: {} @ {}", tick.symbol, tick.price);
-                last_price = Some(tick.price);
+                last_prices.insert(tick.symbol.clone(), tick.price);
             }
 
-            // ── Drain klines ───────────────────────────────────────
+            // ── Drain klines (routed to the correct symbol's MarketData) ──
             while let Ok(kline) = kline_rx.try_recv() {
                 let is_closed = kline.kline.is_closed;
+                let kline_symbol = kline.symbol.clone();
 
                 if let Some(candle) = crate::types::kline_event_to_candle(&kline) {
                     let interval = match kline.kline.interval.as_str() {
@@ -284,11 +295,15 @@ pub async fn start_mock_session(
                     };
                     
                     if let Some(inv) = interval {
-                        let candles = market_data.candles_mut(inv);
+                        // Route candle to the correct symbol's MarketData.
+                        let md = market_data_map
+                            .entry(kline_symbol.clone())
+                            .or_insert_with(|| MarketData::new(&kline_symbol));
+                        let candles = md.candles_mut(inv);
                         if is_closed {
                             info!(
                                 "[SESSION] Closed kline: {} {} close={}",
-                                kline.symbol, kline.kline.interval, kline.kline.close
+                                kline_symbol, kline.kline.interval, kline.kline.close
                             );
                             candles.push(candle);
                         } else {
@@ -305,20 +320,41 @@ pub async fn start_mock_session(
                     }
                 }
 
-                if !initialized && !market_data.candles_15m.is_empty() {
-                    initialized = true;
-                    info!("[SESSION] Engine initialized with 15m candles");
+                // Initialise once BTC has 15m data (the evaluator needs BTC for trend signals).
+                if !initialized {
+                    if let Some(btc_md) = market_data_map.get(&btc_symbol) {
+                        if !btc_md.candles_15m.is_empty() {
+                            initialized = true;
+                            info!("[SESSION] Engine initialized with BTC 15m candles");
+                        }
+                    }
                 }
 
                 if initialized {
-                    match evaluator.evaluate(&market_data, &strategy_config) {
+                    // Evaluator uses BTC data for trend-alignment signals.
+                    let btc_md = match market_data_map.get(&btc_symbol) {
+                        Some(md) => md,
+                        None => continue,
+                    };
+
+                    match evaluator.evaluate(btc_md, &strategy_config) {
                         Ok(true) => {
                             log::info!("[EVALUATOR] Signal generated: conditions met!");
 
-                            let symbol = "BTCUSDT";
+                            // Trade symbol is the volatile coin, NOT BTCUSDT.
+                            let symbol = active_trade_symbol.as_str();
 
-                            // Task 2: Duplicate Trade Guard
-                            let current_candle_time = market_data.candles_15m.last().map(|c| c.timestamp.timestamp_millis() as u64).unwrap_or(0);
+                            // Get the trade symbol's own MarketData for price/indicators.
+                            let trade_md = match market_data_map.get(symbol) {
+                                Some(md) => md,
+                                None => {
+                                    log::warn!("[TRADE] No MarketData for {} yet — skipping", symbol);
+                                    continue;
+                                }
+                            };
+
+                            // Duplicate Trade Guard — keyed on the trade symbol's candle time.
+                            let current_candle_time = trade_md.candles_15m.last().map(|c| c.timestamp.timestamp_millis() as u64).unwrap_or(0);
                             if let Some(&last_time) = last_traded_candle.get(symbol) {
                                 if last_time == current_candle_time {
                                     log::debug!("[TRADE] Duplicate signal for candle {}, skipping.", current_candle_time);
@@ -326,24 +362,18 @@ pub async fn start_mock_session(
                                 }
                             }
 
-                            // ── Execute mock trade ───────────────────────
-                            let entry_price = last_price.unwrap_or_else(|| {
-                                // Fallback: use the last closed candle's close price
-                                market_data.candles_15m.last()
+                            // ── Entry price: use the TRADE SYMBOL's last aggTrade price ──
+                            let entry_price = last_prices.get(symbol).copied().unwrap_or_else(|| {
+                                // Fallback: use the trade symbol's last closed 15m candle close.
+                                trade_md.candles_15m.last()
                                     .map(|c| c.close)
                                     .unwrap_or(dec!(0))
                             });
 
                             if entry_price == dec!(0) {
-                                log::warn!("[TRADE] Skipping — no price available");
+                                log::warn!("[TRADE] Skipping — no price available for {}", symbol);
                                 continue;
                             }
-
-                            // Use 1% of entry as a simple stop-loss distance for mock
-                            let stop_distance = entry_price * dec!(0.01);
-                            let stop_loss = entry_price - stop_distance;
-                            let minimum_rr = Decimal::try_from(strategy_config.risk.minimum_rr).unwrap_or(dec!(2));
-                            let take_profit = entry_price + stop_distance * minimum_rr;
 
                             // Calculate position size via risk manager
                             let rm = risk_manager.lock().await;
@@ -353,21 +383,19 @@ pub async fn start_mock_session(
                                 continue;
                             }
 
-                            // Task 1: Check MAX_OPEN_POSITIONS using the properly updated active_trades
                             if trade_manager.active_trades().len() >= crate::exchange::config::MAX_OPEN_POSITIONS {
                                 log::warn!("[TRADE] MAX_OPEN_POSITIONS guard hit — skipping entry");
                                 continue;
                             }
 
-                            // Task 3: Calculate indicators dynamically for logging
-                            let mut atr_15m = stop_distance;
-                            let atr_4h = stop_distance;
+                            // ── Compute indicators from the TRADE SYMBOL's candles ──────
+                            let mut atr_15m = dec!(0);
                             let mut rsi_val = dec!(0);
                             let mut adx_val = dec!(0);
 
-                            let closes: Vec<f64> = market_data.candles_15m.iter().map(|c| c.close.to_f64().unwrap_or(0.0)).collect();
-                            let highs: Vec<f64> = market_data.candles_15m.iter().map(|c| c.high.to_f64().unwrap_or(0.0)).collect();
-                            let lows: Vec<f64> = market_data.candles_15m.iter().map(|c| c.low.to_f64().unwrap_or(0.0)).collect();
+                            let closes: Vec<f64> = trade_md.candles_15m.iter().map(|c| c.close.to_f64().unwrap_or(0.0)).collect();
+                            let highs: Vec<f64> = trade_md.candles_15m.iter().map(|c| c.high.to_f64().unwrap_or(0.0)).collect();
+                            let lows: Vec<f64> = trade_md.candles_15m.iter().map(|c| c.low.to_f64().unwrap_or(0.0)).collect();
 
                             if closes.len() > 14 {
                                 let mut tr_sum = 0.0;
@@ -398,6 +426,21 @@ pub async fn start_mock_session(
                                 }
                                 adx_val = dec!(25); // Simplified ADX proxy
                             }
+
+                            // ── ATR-based Stop Loss & Take Profit ────────────────────
+                            // Skip if ATR is zero (insufficient data for the trade symbol).
+                            if atr_15m == dec!(0) {
+                                log::warn!("[TRADE] ATR is zero for {} — insufficient candle data, skipping", symbol);
+                                continue;
+                            }
+                            let atr_4h = atr_15m; // Proxy: use 15m ATR until 4H data accumulates.
+                            let stop_loss = entry_price - dec!(2) * atr_15m;
+                            let take_profit = entry_price + dec!(3) * atr_15m;
+
+                            log::info!(
+                                "[TRADE] {} entry={} | ATR={} | SL={} TP={}",
+                                symbol, entry_price, atr_15m, stop_loss, take_profit
+                            );
 
                             match rm.calculate_position_size(
                                 entry_price,
@@ -543,4 +586,111 @@ pub async fn get_system_status(state: State<'_, AppState>) -> Result<SystemStatu
     };
 
     Ok(status)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Credential Management
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// **Save Binance API credentials to the local `.env` file.**
+///
+/// ## Security model
+/// - The frontend passes keys only once via IPC — they are **never** stored in
+///   the browser, localStorage, or any persistent React state.
+/// - The backend writes the keys to the `.env` file on disk and immediately
+///   reloads them into the process environment via `dotenvy`, so the session
+///   starts with the new credentials without requiring an app restart.
+/// - The `.env` file is git-ignored and lives only on the user's machine.
+///
+/// ## Behaviour
+/// - If `BINANCE_API_KEY=` / `BINANCE_API_SECRET=` lines already exist they are
+///   updated in-place, preserving all other lines (comments, `BINANCE_TESTNET`,
+///   etc.).
+/// - If they do not exist, the lines are appended.
+/// - An empty `api_key` or `api_secret` is rejected before any file I/O.
+#[tauri::command]
+pub async fn save_api_credentials(api_key: String, api_secret: String) -> Result<(), String> {
+    // ── Validate inputs ───────────────────────────────────────────────────────
+    let api_key = api_key.trim().to_string();
+    let api_secret = api_secret.trim().to_string();
+
+    if api_key.is_empty() {
+        return Err("API key must not be empty.".to_string());
+    }
+    if api_secret.is_empty() {
+        return Err("API secret must not be empty.".to_string());
+    }
+
+    info!("[CREDENTIALS] Received save_api_credentials — updating .env");
+
+    // ── Resolve the .env path (same directory as the running binary) ──────────
+    // `std::env::current_exe()` gives us the Tauri binary; we place `.env`
+    // next to it so `dotenvy::dotenv()` at startup always finds it.
+    let env_path = std::env::current_exe()
+        .map_err(|e| format!("Cannot locate binary directory: {}", e))?
+        .parent()
+        .ok_or_else(|| "Binary has no parent directory".to_string())?
+        .join(".env");
+
+    // Also try the current working directory as a fallback (matches dev builds).
+    let env_path = if env_path.exists() {
+        env_path
+    } else {
+        std::path::PathBuf::from(".env")
+    };
+
+    // ── Read the existing file (or start with an empty buffer) ────────────────
+    let existing = if env_path.exists() {
+        std::fs::read_to_string(&env_path)
+            .map_err(|e| format!("Failed to read .env: {}", e))?
+    } else {
+        String::new()
+    };
+
+    // ── Rewrite lines, updating matching keys in-place ────────────────────────
+    let mut key_written = false;
+    let mut secret_written = false;
+
+    let mut new_lines: Vec<String> = existing
+        .lines()
+        .map(|line| {
+            if line.starts_with("BINANCE_API_KEY=") {
+                key_written = true;
+                format!("BINANCE_API_KEY={}", api_key)
+            } else if line.starts_with("BINANCE_API_SECRET=") {
+                secret_written = true;
+                format!("BINANCE_API_SECRET={}", api_secret)
+            } else {
+                line.to_string()
+            }
+        })
+        .collect();
+
+    // Append any keys that were not found.
+    if !key_written {
+        new_lines.push(format!("BINANCE_API_KEY={}", api_key));
+    }
+    if !secret_written {
+        new_lines.push(format!("BINANCE_API_SECRET={}", api_secret));
+    }
+
+    // Ensure a trailing newline.
+    let mut output = new_lines.join("\n");
+    output.push('\n');
+
+    // ── Write atomically (temp file + rename) ─────────────────────────────────
+    let tmp_path = env_path.with_extension("env.tmp");
+    std::fs::write(&tmp_path, &output)
+        .map_err(|e| format!("Failed to write temp .env: {}", e))?;
+    std::fs::rename(&tmp_path, &env_path)
+        .map_err(|e| format!("Failed to finalise .env: {}", e))?;
+
+    // ── Reload into the live process so the new keys take effect immediately ──
+    // We set env vars directly because dotenvy::dotenv() won't override already-
+    // set values in the current process.
+    std::env::set_var("BINANCE_API_KEY", &api_key);
+    std::env::set_var("BINANCE_API_SECRET", &api_secret);
+
+    info!("[CREDENTIALS] .env updated and process environment refreshed.");
+    Ok(())
 }
