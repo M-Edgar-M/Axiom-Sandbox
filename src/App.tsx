@@ -100,6 +100,7 @@ function TradeJournal({ tradeHistory }: { tradeHistory: TradeRecordDto[] }) {
           <span className="material-symbols-outlined text-[20px] text-on-surface-variant">table_rows</span>
           Trade Journal
         </h3>
+        <span className="text-xs text-on-surface-variant">{tradeHistory.filter(t => t.status === 'Closed').length} closed / {tradeHistory.filter(t => t.status === 'Open').length} open</span>
       </div>
       <div className="overflow-x-auto">
         <table className="w-full text-left border-collapse">
@@ -108,19 +109,33 @@ function TradeJournal({ tradeHistory }: { tradeHistory: TradeRecordDto[] }) {
               <th className="p-sm font-label-caps text-label-caps text-on-surface-variant font-medium">SYMBOL</th>
               <th className="p-sm font-label-caps text-label-caps text-on-surface-variant font-medium">DIR</th>
               <th className="p-sm font-label-caps text-label-caps text-on-surface-variant font-medium">ENTRY TIME</th>
-              <th className="p-sm font-label-caps text-label-caps text-on-surface-variant font-medium">EXIT TIME</th>
+              <th className="p-sm font-label-caps text-label-caps text-on-surface-variant font-medium text-right">ENTRY</th>
+              <th className="p-sm font-label-caps text-label-caps text-on-surface-variant font-medium text-right">SL</th>
+              <th className="p-sm font-label-caps text-label-caps text-on-surface-variant font-medium text-right">TP</th>
+              <th className="p-sm font-label-caps text-label-caps text-on-surface-variant font-medium text-right">SIZE</th>
+              <th className="p-sm font-label-caps text-label-caps text-on-surface-variant font-medium text-center">RSI</th>
+              <th className="p-sm font-label-caps text-label-caps text-on-surface-variant font-medium text-center">ADX</th>
+              <th className="p-sm font-label-caps text-label-caps text-on-surface-variant font-medium">TREND</th>
               <th className="p-sm font-label-caps text-label-caps text-on-surface-variant font-medium">PHASE</th>
               <th className="p-sm font-label-caps text-label-caps text-on-surface-variant font-medium text-right pr-lg">P&L</th>
             </tr>
           </thead>
           <tbody className="font-data-md text-data-md text-inverse-surface">
             {tradeHistory.length === 0 ? (
-              <tr><td colSpan={6} className="p-md text-center text-on-surface-variant text-sm">No trades recorded yet.</td></tr>
+              <tr><td colSpan={12} className="p-md text-center text-on-surface-variant text-sm">No trades recorded yet.</td></tr>
             ) : (
               tradeHistory.map(trade => {
                 const pnl = Number(trade.realized_pnl);
+                const rsi = Number(trade.entry_rsi).toFixed(1);
+                const adx = Number(trade.entry_adx).toFixed(1);
+                const rsiNum = Number(trade.entry_rsi);
+                const adxNum = Number(trade.entry_adx);
                 const entryTime = new Date(trade.entry_time).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' });
-                const exitTime = trade.exit_time ? new Date(trade.exit_time).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' }) : "—";
+                const rsiColor = rsiNum > 70 ? 'text-tertiary-container' : rsiNum < 30 ? 'text-secondary-container' : 'text-on-surface-variant';
+                const adxColor = adxNum > 25 ? 'text-[#0070FF]' : 'text-on-surface-variant';
+                const phaseColors: Record<string, string> = { Phase1: 'bg-[#0070FF]/10 text-[#0070FF]', Phase2: 'bg-secondary-container/10 text-secondary-container', Phase3: 'bg-purple-500/10 text-purple-400' };
+                const phaseStyle = phaseColors[trade.phase] ?? 'bg-white/5 text-on-surface-variant';
+                const trendColor = trade.trend_condition === 'LiveSignal' ? 'text-[#00FFAA]' : trade.trend_condition.toLowerCase().includes('up') ? 'text-secondary-container' : trade.trend_condition.toLowerCase().includes('down') ? 'text-tertiary-container' : 'text-on-surface-variant';
                 
                 return (
                   <tr key={trade.id} className="border-b border-white/5 hover:bg-[#1E1E1E] transition-colors">
@@ -131,9 +146,15 @@ function TradeJournal({ tradeHistory }: { tradeHistory: TradeRecordDto[] }) {
                       </span>
                     </td>
                     <td className="p-sm text-on-surface-variant text-sm">{entryTime}</td>
-                    <td className="p-sm text-on-surface-variant text-sm">{exitTime}</td>
-                    <td className="p-sm text-on-surface-variant text-sm">{trade.phase}</td>
-                    <td className={`p-sm text-right pr-lg ${pnl > 0 ? 'text-green-500' : pnl < 0 ? 'text-red-500' : 'text-on-surface-variant'}`}>
+                    <td className="p-sm text-right tabular-nums">{Number(trade.entry_price).toFixed(2)}</td>
+                    <td className="p-sm text-right tabular-nums text-tertiary-container/80">{Number(trade.stop_loss).toFixed(2)}</td>
+                    <td className="p-sm text-right tabular-nums text-secondary-container/80">{Number(trade.take_profit).toFixed(2)}</td>
+                    <td className="p-sm text-right tabular-nums text-on-surface-variant">{Number(trade.position_size).toFixed(4)}</td>
+                    <td className={`p-sm text-center tabular-nums ${rsiColor}`}>{rsi}</td>
+                    <td className={`p-sm text-center tabular-nums ${adxColor}`}>{adx}</td>
+                    <td className="p-sm"><span className={`text-xs ${trendColor}`}>{trade.trend_condition}</span></td>
+                    <td className="p-sm"><span className={`px-2 py-0.5 rounded text-[10px] font-bold ${phaseStyle}`}>{trade.phase}</span></td>
+                    <td className={`p-sm text-right pr-lg tabular-nums ${pnl > 0 ? 'text-green-500' : pnl < 0 ? 'text-red-500' : 'text-on-surface-variant'}`}>
                       {pnl === 0 ? "—" : (pnl > 0 ? "+" : "") + pnl.toFixed(2)}
                     </td>
                   </tr>
@@ -661,6 +682,7 @@ export default function App() {
                     <span className="material-symbols-outlined text-[20px] text-on-surface-variant">table_rows</span>
                     Session Ledger {sessionActive && <span className="text-secondary-container text-xs ml-2"> (Polling)</span>}
                   </h3>
+                  <span className="text-xs text-on-surface-variant">{tradeHistory.filter(t => t.status === 'Open').length} open · {tradeHistory.filter(t => t.status === 'Closed').length} closed</span>
                 </div>
                 <div className="overflow-x-auto">
                   <table className="w-full text-left border-collapse">
@@ -670,30 +692,49 @@ export default function App() {
                         <th className="p-sm font-label-caps text-label-caps text-on-surface-variant font-medium">SYM</th>
                         <th className="p-sm font-label-caps text-label-caps text-on-surface-variant font-medium">DIR</th>
                         <th className="p-sm font-label-caps text-label-caps text-on-surface-variant font-medium text-right">ENTRY</th>
-                        <th className="p-sm font-label-caps text-label-caps text-on-surface-variant font-medium text-right">EXIT</th>
+                        <th className="p-sm font-label-caps text-label-caps text-on-surface-variant font-medium text-right">SL</th>
+                        <th className="p-sm font-label-caps text-label-caps text-on-surface-variant font-medium text-right">TP</th>
+                        <th className="p-sm font-label-caps text-label-caps text-on-surface-variant font-medium text-right">SIZE</th>
+                        <th className="p-sm font-label-caps text-label-caps text-on-surface-variant font-medium text-center">RSI</th>
+                        <th className="p-sm font-label-caps text-label-caps text-on-surface-variant font-medium text-center">ADX</th>
+                        <th className="p-sm font-label-caps text-label-caps text-on-surface-variant font-medium text-center">ATR</th>
+                        <th className="p-sm font-label-caps text-label-caps text-on-surface-variant font-medium">TREND</th>
                         <th className="p-sm font-label-caps text-label-caps text-on-surface-variant font-medium">PHASE</th>
                         <th className="p-sm font-label-caps text-label-caps text-on-surface-variant font-medium text-right pr-lg">P&L</th>
                       </tr>
                     </thead>
                     <tbody className="font-data-md text-data-md text-inverse-surface">
                       {tradeHistory.length === 0 ? (
-                        <tr><td colSpan={7} className="p-md text-center text-on-surface-variant text-sm">No trades recorded yet. Start a session to begin.</td></tr>
+                        <tr><td colSpan={13} className="p-md text-center text-on-surface-variant text-sm">No trades recorded yet. Start a session to begin.</td></tr>
                       ) : (
                         tradeHistory.map(trade => {
                           const pnl = Number(trade.realized_pnl);
+                          const rsiNum = Number(trade.entry_rsi);
+                          const adxNum = Number(trade.entry_adx);
+                          const rsiColor = rsiNum > 70 ? 'text-tertiary-container' : rsiNum < 30 ? 'text-secondary-container' : 'text-on-surface-variant';
+                          const adxColor = adxNum > 25 ? 'text-[#0070FF]' : 'text-on-surface-variant';
+                          const phaseColors: Record<string, string> = { Phase1: 'bg-[#0070FF]/10 text-[#0070FF]', Phase2: 'bg-secondary-container/10 text-secondary-container', Phase3: 'bg-purple-500/10 text-purple-400' };
+                          const phaseStyle = phaseColors[trade.phase] ?? 'bg-white/5 text-on-surface-variant';
+                          const trendColor = trade.trend_condition === 'LiveSignal' ? 'text-[#00FFAA]' : trade.trend_condition.toLowerCase().includes('up') ? 'text-secondary-container' : trade.trend_condition.toLowerCase().includes('down') ? 'text-tertiary-container' : 'text-on-surface-variant';
                           return (
                             <tr key={trade.id} className="border-b border-white/5 hover:bg-[#1E1E1E] transition-colors">
-                              <td className="p-sm text-on-surface-variant">{trade.id.slice(0, 8)}…</td>
+                              <td className="p-sm text-on-surface-variant text-xs font-mono">{trade.id.slice(5, 13)}…</td>
                               <td className="p-sm">{trade.symbol}</td>
                               <td className="p-sm">
                                 <span className={`px-2 py-0.5 rounded text-[11px] ${trade.direction === 'Long' ? 'bg-secondary-container/10 text-secondary-container' : 'bg-tertiary-container/10 text-tertiary-container'}`}>
                                   {trade.direction.toUpperCase()}
                                 </span>
                               </td>
-                              <td className="p-sm text-right">{Number(trade.entry_price).toFixed(2)}</td>
-                              <td className="p-sm text-right">{trade.exit_price ? Number(trade.exit_price).toFixed(2) : "-"}</td>
-                              <td className={`p-sm ${trade.status === 'Open' ? 'text-primary-container' : 'text-on-surface-variant'}`}>{trade.status === 'Open' ? 'OPEN' : 'CLOSED'}</td>
-                              <td className={`p-sm text-right pr-lg ${pnl > 0 ? 'text-secondary-container' : pnl < 0 ? 'text-tertiary-container' : 'text-on-surface-variant'}`}>
+                              <td className="p-sm text-right tabular-nums">{Number(trade.entry_price).toFixed(2)}</td>
+                              <td className="p-sm text-right tabular-nums text-tertiary-container/80 text-xs">{Number(trade.stop_loss).toFixed(2)}</td>
+                              <td className="p-sm text-right tabular-nums text-secondary-container/80 text-xs">{Number(trade.take_profit).toFixed(2)}</td>
+                              <td className="p-sm text-right tabular-nums text-on-surface-variant text-xs">{Number(trade.position_size).toFixed(4)}</td>
+                              <td className={`p-sm text-center tabular-nums text-xs ${rsiColor}`}>{rsiNum.toFixed(1)}</td>
+                              <td className={`p-sm text-center tabular-nums text-xs ${adxColor}`}>{adxNum.toFixed(1)}</td>
+                              <td className="p-sm text-center tabular-nums text-xs text-on-surface-variant">{Number(trade.atr_value).toFixed(1)}</td>
+                              <td className="p-sm"><span className={`text-xs ${trendColor}`}>{trade.trend_condition}</span></td>
+                              <td className="p-sm"><span className={`px-2 py-0.5 rounded text-[10px] font-bold ${phaseStyle}`}>{trade.phase}</span></td>
+                              <td className={`p-sm text-right pr-lg tabular-nums ${pnl > 0 ? 'text-secondary-container' : pnl < 0 ? 'text-tertiary-container' : 'text-on-surface-variant'}`}>
                                 {pnl === 0 ? "—" : (pnl > 0 ? "+" : "") + pnl.toFixed(2)}
                               </td>
                             </tr>

@@ -51,6 +51,14 @@ pub struct TradeRecordDto {
     pub realized_pnl: String,
     pub phase: String,
     pub risk_per_unit: String,
+    /// ATR value at entry — used for trailing stop sizing context.
+    pub atr_value: String,
+    /// RSI value at entry — signal quality context.
+    pub entry_rsi: String,
+    /// ADX value at entry — trend strength context.
+    pub entry_adx: String,
+    /// Trend condition label at entry (e.g. "LiveSignal", "StrongUptrend").
+    pub trend_condition: String,
 }
 
 impl From<TradeRecord> for TradeRecordDto {
@@ -70,6 +78,10 @@ impl From<TradeRecord> for TradeRecordDto {
             realized_pnl: r.realized_pnl.to_string(),
             phase: format!("{:?}", r.phase),
             risk_per_unit: r.risk_per_unit.to_string(),
+            atr_value: r.atr_value.to_string(),
+            entry_rsi: r.entry_rsi.to_string(),
+            entry_adx: r.entry_adx.to_string(),
+            trend_condition: r.trend_condition,
         }
     }
 }

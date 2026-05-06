@@ -146,6 +146,14 @@ export interface TradeRecordDto {
   /** "Phase1" | "Phase2" | "Phase3" */
   phase: string;
   risk_per_unit: string;
+  /** ATR value at entry — used for trailing stop sizing context. */
+  atr_value: string;
+  /** RSI value at the moment of entry (0–100). */
+  entry_rsi: string;
+  /** ADX value at the moment of entry — trend strength 0–100. */
+  entry_adx: string;
+  /** Trend condition label (e.g. "LiveSignal", "StrongUptrend"). */
+  trend_condition: string;
 }
 
 /** System health status snapshot returned by `get_system_status`. */
