@@ -27,7 +27,7 @@ use tokio::sync::RwLock;
 use crate::types::{Position, Price, Volume};
 
 use super::orders::ExecutionError;
-use super::trade_manager::{ManagedPosition, ManagementAction, TradeState, evaluate_position};
+use super::trade_manager::{evaluate_position, ManagedPosition, ManagementAction, TradeState};
 
 // ─── Configuration ────────────────────────────────────────────────────────────
 

@@ -9,6 +9,6 @@ mod primitives;
 mod trade;
 
 // Re-export all public types for convenient access
-pub use market::{Candle, Interval, MarketData, kline_event_to_candle, kline_summary_to_candle};
+pub use market::{kline_event_to_candle, kline_summary_to_candle, Candle, Interval, MarketData};
 pub use position::Position;
 pub use primitives::{Balance, Price, Volume};

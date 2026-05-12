@@ -4,7 +4,7 @@ use rust_decimal::Decimal;
 use thiserror::Error;
 
 use super::csv_logger::{CsvError, CsvLogger};
-use super::trade_record::{DECIMAL_PLACES, TradeDirection, TradePhase, TradeRecord, TradeStatus};
+use super::trade_record::{TradeDirection, TradePhase, TradeRecord, TradeStatus, DECIMAL_PLACES};
 
 /// Configuration constants for trade management.
 pub mod config {
@@ -329,17 +329,34 @@ impl TradeManager {
             });
         }
 
-        // Calculate final PnL (including any previously realized)
-        let remaining_pnl = trade.unrealized_pnl(exit_price);
-        let total_pnl = trade.realized_pnl + remaining_pnl;
+        let slipped_exit_price = match trade.direction {
+            TradeDirection::Long => {
+                exit_price * (Decimal::ONE - crate::exchange::config::MOCK_SLIPPAGE_PCT)
+            }
+            TradeDirection::Short => {
+                exit_price * (Decimal::ONE + crate::exchange::config::MOCK_SLIPPAGE_PCT)
+            }
+        }
+        .round_dp(DECIMAL_PLACES);
 
-        trade.close(exit_price);
-        trade.realized_pnl = total_pnl.round_dp(DECIMAL_PLACES);
+        let quantity = trade.position_size;
+        let pnl_per_unit = match trade.direction {
+            TradeDirection::Long => slipped_exit_price - trade.entry_price,
+            TradeDirection::Short => trade.entry_price - slipped_exit_price,
+        };
+        let remaining_pnl = (pnl_per_unit * quantity).round_dp(DECIMAL_PLACES);
+        let commission =
+            (trade.entry_price * quantity * crate::exchange::config::MOCK_COMMISSION_PCT)
+                + (slipped_exit_price * quantity * crate::exchange::config::MOCK_COMMISSION_PCT);
+        let total_pnl = (trade.realized_pnl + remaining_pnl - commission).round_dp(DECIMAL_PLACES);
+
+        trade.close(slipped_exit_price);
+        trade.realized_pnl = total_pnl;
 
         // Update CSV
         self.logger.update_record(
             trade_id,
-            Some(exit_price),
+            Some(slipped_exit_price),
             Some(total_pnl),
             Some(TradeStatus::Closed),
             None,
@@ -603,6 +620,10 @@ mod tests {
         // Trade should be removed from active
         assert!(manager.find_trade("trade-001").is_none());
         assert_eq!(manager.active_trades().len(), 0);
+
+        let records = manager.logger().read_all_records().unwrap();
+        assert_eq!(records[0].exit_price, Some(dec!(51448.5)));
+        assert_eq!(records[0].realized_pnl, dec!(1397.77575));
     }
 
     // ── Short position tests ──

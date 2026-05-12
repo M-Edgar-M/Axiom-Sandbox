@@ -14,8 +14,8 @@ use binance::futures::general::FuturesGeneral;
 use binance::model::Filters;
 use hmac::{Hmac, Mac};
 use log::{error, info, warn};
-use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive;
+use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use tokio::sync::RwLock;
@@ -23,9 +23,9 @@ use tokio::sync::RwLock;
 use crate::types::{Position, Price, Volume};
 
 use super::config;
-use super::orders::{ExecutionError, OcoOrderResult};
 pub use super::orders::OrderSide;
-use super::trade_manager::{ManagedPosition, ManagementAction, TradeState, evaluate_position};
+use super::orders::{ExecutionError, OcoOrderResult};
+use super::trade_manager::{evaluate_position, ManagedPosition, ManagementAction, TradeState};
 
 // ─── Re-export EngineConfig ──────────────────────────────────────────────────
 
@@ -492,10 +492,7 @@ async fn place_futures_oco(
             .and_then(|m| m.as_str())
             .unwrap_or("unknown error");
         return Err(ExecutionError::ExchangeError {
-            message: format!(
-                "Binance OCO HTTP {} — code {}: {}",
-                status, code, msg
-            ),
+            message: format!("Binance OCO HTTP {} — code {}: {}", status, code, msg),
         });
     }
 
@@ -537,16 +534,24 @@ async fn place_futures_oco(
             "[ENGINE] OCO leg types unrecognised; falling back to positional assignment. body={}",
             body
         );
-        let mut iter = orders.iter().filter_map(|o| o.get("orderId").and_then(|v| v.as_u64()));
+        let mut iter = orders
+            .iter()
+            .filter_map(|o| o.get("orderId").and_then(|v| v.as_u64()));
         tp_order_id = tp_order_id.or_else(|| iter.next());
         sl_order_id = sl_order_id.or_else(|| iter.next());
     }
 
     let tp_id = tp_order_id.ok_or_else(|| ExecutionError::ExchangeError {
-        message: format!("Could not identify TP leg order ID in OCO response: {}", body),
+        message: format!(
+            "Could not identify TP leg order ID in OCO response: {}",
+            body
+        ),
     })?;
     let sl_id = sl_order_id.ok_or_else(|| ExecutionError::ExchangeError {
-        message: format!("Could not identify SL leg order ID in OCO response: {}", body),
+        message: format!(
+            "Could not identify SL leg order ID in OCO response: {}",
+            body
+        ),
     })?;
 
     Ok(OcoOrderResult {
@@ -855,6 +860,31 @@ impl ExecutionEngine {
             self.check_funding_rate(funding)?;
         }
 
+        let (entry_price, stop_loss, take_profit) = if self.mock_mode {
+            let slipped_entry_price = match direction {
+                Position::Long => entry_price * (Decimal::ONE + config::MOCK_SLIPPAGE_PCT),
+                Position::Short => entry_price * (Decimal::ONE - config::MOCK_SLIPPAGE_PCT),
+                Position::None => entry_price,
+            };
+
+            let stop_distance = (entry_price - stop_loss).abs();
+            let take_profit_distance = (take_profit - entry_price).abs();
+            let slipped_stop_loss = match direction {
+                Position::Long => slipped_entry_price - stop_distance,
+                Position::Short => slipped_entry_price + stop_distance,
+                Position::None => stop_loss,
+            };
+            let slipped_take_profit = match direction {
+                Position::Long => slipped_entry_price + take_profit_distance,
+                Position::Short => slipped_entry_price - take_profit_distance,
+                Position::None => take_profit,
+            };
+
+            (slipped_entry_price, slipped_stop_loss, slipped_take_profit)
+        } else {
+            (entry_price, stop_loss, take_profit)
+        };
+
         // Build position state machine
         let mut position = ManagedPosition::new(
             symbol,
@@ -1011,12 +1041,12 @@ impl ExecutionEngine {
     }
 
     // ── Reboot Recovery ────────────────────────────────────────────────────────
-    
+
     /// Restores open positions from local CSV state.
     /// Re-links them to active Binance orders if not in mock mode.
     pub async fn restore_positions(&mut self, open_trades: Vec<crate::data::TradeRecord>) {
         let mut positions = self.positions.write().await;
-        
+
         for trade in open_trades {
             let symbol = trade.symbol.clone();
             let direction = match trade.direction {
@@ -1043,12 +1073,19 @@ impl ExecutionEngine {
 
             position.opened_at = trade.entry_time;
             position.realized_pnl = trade.realized_pnl;
-            
+
             if !self.mock_mode {
                 let base_url = algo_base_url(self.config.testnet);
-                
+
                 // Fetch standard open orders (for OCO legs)
-                if let Ok(orders) = fetch_open_orders(&self.config.api_key, &self.config.api_secret, base_url, &symbol).await {
+                if let Ok(orders) = fetch_open_orders(
+                    &self.config.api_key,
+                    &self.config.api_secret,
+                    base_url,
+                    &symbol,
+                )
+                .await
+                {
                     for order in orders {
                         if let (Some(list_id), Some(order_id), Some(otype)) = (
                             order.get("orderListId").and_then(|v| v.as_u64()),
@@ -1069,12 +1106,27 @@ impl ExecutionEngine {
 
                 // If in Phase 3, we also need to find the trailing stop order (algo order)
                 if position.state == TradeState::TrailingActive {
-                    if let Ok(json_str) = get_open_algo_orders(&self.config.api_key, &self.config.api_secret, base_url, &symbol).await {
-                        if let Ok(algo_orders) = serde_json::from_str::<Vec<serde_json::Value>>(&json_str) {
+                    if let Ok(json_str) = get_open_algo_orders(
+                        &self.config.api_key,
+                        &self.config.api_secret,
+                        base_url,
+                        &symbol,
+                    )
+                    .await
+                    {
+                        if let Ok(algo_orders) =
+                            serde_json::from_str::<Vec<serde_json::Value>>(&json_str)
+                        {
                             for order in algo_orders {
                                 if let (Some(order_id), Some(otype)) = (
-                                    order.get("orderId").or_else(|| order.get("algoId")).and_then(|v| v.as_u64()),
-                                    order.get("type").or_else(|| order.get("origType")).and_then(|v| v.as_str()),
+                                    order
+                                        .get("orderId")
+                                        .or_else(|| order.get("algoId"))
+                                        .and_then(|v| v.as_u64()),
+                                    order
+                                        .get("type")
+                                        .or_else(|| order.get("origType"))
+                                        .and_then(|v| v.as_str()),
                                 ) {
                                     if otype == "TRAILING_STOP_MARKET" {
                                         position.trailing_stop_order_id = Some(order_id);
@@ -1085,7 +1137,7 @@ impl ExecutionEngine {
                         }
                     }
                 }
-                
+
                 info!("[ENGINE] Restored position {}: state={:?} oco_list={:?} sl_id={:?} tp_id={:?} trail_id={:?}", 
                     symbol, position.state, position.oco_order_list_id, position.stop_loss_order_id, position.take_profit_order_id, position.trailing_stop_order_id);
             } else {
@@ -1096,9 +1148,12 @@ impl ExecutionEngine {
                 if position.state == TradeState::TrailingActive {
                     position.trailing_stop_order_id = Some(10003);
                 }
-                info!("[ENGINE] Restored mock position {}: state={:?}", symbol, position.state);
+                info!(
+                    "[ENGINE] Restored mock position {}: state={:?}",
+                    symbol, position.state
+                );
             }
-            
+
             positions.insert(symbol, position);
         }
     }
@@ -1266,8 +1321,10 @@ impl ExecutionEngine {
             };
 
             // The partial close reduced the quantity; use the remaining size.
-            let remaining_qty_f64 =
-                round_qty_to_step(position.current_quantity - quantity_to_close, filters.step_size);
+            let remaining_qty_f64 = round_qty_to_step(
+                position.current_quantity - quantity_to_close,
+                filters.step_size,
+            );
 
             let new_oco = place_futures_oco(
                 &self.config.api_key,
@@ -1649,7 +1706,7 @@ mod tests {
             .unwrap();
 
         let action = engine
-            .monitor_position("BTCUSDT", dec!(51500))
+            .monitor_position("BTCUSDT", dec!(51550))
             .await
             .unwrap();
 
@@ -1681,7 +1738,7 @@ mod tests {
             .unwrap();
 
         let action = engine
-            .monitor_position("BTCUSDT", dec!(52500))
+            .monitor_position("BTCUSDT", dec!(52550))
             .await
             .unwrap();
 
@@ -1772,7 +1829,7 @@ mod tests {
             .unwrap();
 
         let action = engine
-            .monitor_position("BTCUSDT", dec!(48500))
+            .monitor_position("BTCUSDT", dec!(48450))
             .await
             .unwrap();
 
@@ -1804,7 +1861,7 @@ mod tests {
             .unwrap();
 
         let action = engine
-            .monitor_position("BTCUSDT", dec!(47500))
+            .monitor_position("BTCUSDT", dec!(47450))
             .await
             .unwrap();
 

@@ -31,7 +31,10 @@ use super::models::{
 /// Returns `(penultimate_rsi, ultimate_rsi)` so crossover detection works.
 /// Requires `closes.len() >= period + 2`.
 fn wilder_rsi_last_two(closes: &[f64], period: usize) -> (f64, f64) {
-    debug_assert!(closes.len() >= period + 2, "caller must guarantee enough data");
+    debug_assert!(
+        closes.len() >= period + 2,
+        "caller must guarantee enough data"
+    );
 
     // Seed: first `period` candles form the initial average gain/loss.
     let mut avg_gain: f64 = 0.0;
@@ -81,7 +84,9 @@ fn wilder_rsi_last_two(closes: &[f64], period: usize) -> (f64, f64) {
 /// Errors that can occur during rule evaluation.
 #[derive(Debug, thiserror::Error)]
 pub enum EvaluatorError {
-    #[error("insufficient candle data: need at least {required} candles on {interval:?}, got {got}")]
+    #[error(
+        "insufficient candle data: need at least {required} candles on {interval:?}, got {got}"
+    )]
     InsufficientData {
         required: usize,
         got: usize,
@@ -215,11 +220,7 @@ impl RuleEvaluator {
 
     // ── Moving Average ────────────────────────────────────────────────────────
 
-    fn evaluate_ma(
-        &self,
-        rule: &MaRule,
-        market_data: &MarketData,
-    ) -> Result<bool, EvaluatorError> {
+    fn evaluate_ma(&self, rule: &MaRule, market_data: &MarketData) -> Result<bool, EvaluatorError> {
         let candles = market_data.candles(rule.interval);
         let required = rule.slow_lookback.unwrap_or(rule.lookback) + 2;
 
@@ -248,12 +249,8 @@ impl RuleEvaluator {
                 Ok(match rule.condition {
                     MaCondition::PriceIsAbove => last_close > curr_ma,
                     MaCondition::PriceIsBelow => last_close < curr_ma,
-                    MaCondition::PriceCrossesAbove => {
-                        prev_close <= prev_ma && last_close > curr_ma
-                    }
-                    MaCondition::PriceCrossesBelow => {
-                        prev_close >= prev_ma && last_close < curr_ma
-                    }
+                    MaCondition::PriceCrossesAbove => prev_close <= prev_ma && last_close > curr_ma,
+                    MaCondition::PriceCrossesBelow => prev_close >= prev_ma && last_close < curr_ma,
                     _ => unreachable!(),
                 })
             }
@@ -299,22 +296,20 @@ impl RuleEvaluator {
 
         match ma_type {
             MaType::Sma => {
-                let mut ma =
-                    SMA::new(p, &seed).map_err(|e| EvaluatorError::IndicatorInit {
-                        indicator: "SMA",
-                        source: e.into(),
-                    })?;
+                let mut ma = SMA::new(p, &seed).map_err(|e| EvaluatorError::IndicatorInit {
+                    indicator: "SMA",
+                    source: e.into(),
+                })?;
                 for &close in &closes[1..] {
                     prev = curr;
                     curr = ma.next(&close);
                 }
             }
             MaType::Ema => {
-                let mut ma =
-                    EMA::new(p, &seed).map_err(|e| EvaluatorError::IndicatorInit {
-                        indicator: "EMA",
-                        source: e.into(),
-                    })?;
+                let mut ma = EMA::new(p, &seed).map_err(|e| EvaluatorError::IndicatorInit {
+                    indicator: "EMA",
+                    source: e.into(),
+                })?;
                 for &close in &closes[1..] {
                     prev = curr;
                     curr = ma.next(&close);
@@ -489,7 +484,10 @@ mod tests {
         })]);
         let evaluator = RuleEvaluator::new();
         let result = evaluator.evaluate(&md, &config).unwrap();
-        assert!(result, "5× volume spike should exceed 2× multiplier threshold");
+        assert!(
+            result,
+            "5× volume spike should exceed 2× multiplier threshold"
+        );
     }
 
     #[test]

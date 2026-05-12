@@ -1,7 +1,7 @@
 //! WebSocket connection handler with lifecycle management.
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use futures_util::stream::{SplitSink, SplitStream};
@@ -12,7 +12,7 @@ use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 use tokio::time::interval;
 use tokio_tungstenite::tungstenite::protocol::Message;
-use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async};
+use tokio_tungstenite::{connect_async, MaybeTlsStream, WebSocketStream};
 use url::Url;
 
 use super::config;

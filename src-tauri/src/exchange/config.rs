@@ -6,6 +6,12 @@ use rust_decimal_macros::dec;
 /// Maximum acceptable slippage for limit orders (0.2% for top 10 coins).
 pub const MAX_SLIPPAGE_PCT: Decimal = dec!(0.002);
 
+/// Simulated market-order slippage in mock execution (0.1%).
+pub const MOCK_SLIPPAGE_PCT: Decimal = dec!(0.001);
+
+/// Simulated taker commission in mock execution (0.05% per side).
+pub const MOCK_COMMISSION_PCT: Decimal = dec!(0.0005);
+
 /// Maximum funding rate before skipping trade (0.03%).
 pub const FUNDING_RATE_LIMIT: Decimal = dec!(0.0003);
 

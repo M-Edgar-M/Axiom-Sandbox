@@ -14,9 +14,9 @@
 //! - The UI thread is never blocked: heavy work runs on `tokio::spawn`.
 
 use log::{error, info, warn};
+use rust_decimal::prelude::ToPrimitive;
 use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
-use rust_decimal::prelude::ToPrimitive;
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
@@ -155,12 +155,15 @@ pub async fn start_mock_session(
         return Err(format!("Invalid strategy config:\n{}", errors.join("\n")));
     }
 
-    info!("[IPC] start_mock_session — strategy: {}, live_mode: {}", config.name, is_live_mode);
+    info!(
+        "[IPC] start_mock_session — strategy: {}, live_mode: {}",
+        config.name, is_live_mode
+    );
 
     // ── Build the engine (mock or live) ───────────────────────────────────
     let api_key = std::env::var("BINANCE_API_KEY").unwrap_or_default();
     let api_secret = std::env::var("BINANCE_API_SECRET").unwrap_or_default();
-    
+
     let engine_config = crate::exchange::EngineConfig {
         api_key,
         api_secret,
@@ -168,7 +171,7 @@ pub async fn start_mock_session(
         symbols: vec!["BTCUSDT".to_string()],
         ..Default::default()
     };
-    
+
     let engine = if is_live_mode {
         crate::exchange::ExecutionEngine::new(engine_config).await
     } else {
@@ -180,9 +183,15 @@ pub async fn start_mock_session(
     let mut required_intervals = std::collections::HashSet::new();
     for rule in &config.entry_rules {
         match rule {
-            EntryRule::Rsi(r) => { required_intervals.insert(r.interval); },
-            EntryRule::Ma(r) => { required_intervals.insert(r.interval); },
-            EntryRule::Volume(r) => { required_intervals.insert(r.interval); },
+            EntryRule::Rsi(r) => {
+                required_intervals.insert(r.interval);
+            }
+            EntryRule::Ma(r) => {
+                required_intervals.insert(r.interval);
+            }
+            EntryRule::Volume(r) => {
+                required_intervals.insert(r.interval);
+            }
         }
     }
 
@@ -195,11 +204,15 @@ pub async fn start_mock_session(
     let intervals = vec!["15m".to_string(), "1h".to_string(), "4h".to_string()];
 
     // ── Add Historical Backfill (per-symbol) ──────────────────────────────
-    let mut market_data_map: std::collections::HashMap<String, MarketData> = std::collections::HashMap::new();
+    let mut market_data_map: std::collections::HashMap<String, MarketData> =
+        std::collections::HashMap::new();
     for sym in &symbols {
         let mut md = MarketData::new(sym);
         for &interval in &required_intervals {
-            info!("[BACKFILL] Fetching historical data for {} {:?}", sym, interval);
+            info!(
+                "[BACKFILL] Fetching historical data for {} {:?}",
+                sym, interval
+            );
             match crate::data::backfill::fetch_historical_data(sym, interval).await {
                 Ok(candles) => {
                     md.candles_mut(interval).extend(candles);
@@ -215,8 +228,7 @@ pub async fn start_mock_session(
     }
 
     // ── Start the WebSocket stack ─────────────────────────────────────────
-    let (mut price_rx, _order_rx, mut kline_rx) =
-        state.build_ws_stack(symbols, intervals).await;
+    let (mut price_rx, _order_rx, mut kline_rx) = state.build_ws_stack(symbols, intervals).await;
 
     // Start the WS manager (takes &mut self — must hold the lock briefly).
     {
@@ -238,10 +250,13 @@ pub async fn start_mock_session(
             return Err(msg);
         }
     };
-    
+
     let open_trades = trade_manager.active_trades().to_vec();
     if !open_trades.is_empty() {
-        info!("[SESSION] Restoring {} open trades from CSV...", open_trades.len());
+        info!(
+            "[SESSION] Restoring {} open trades from CSV...",
+            open_trades.len()
+        );
         if let Some(engine) = state.engine.lock().await.as_mut() {
             engine.restore_positions(open_trades).await;
         }
@@ -265,8 +280,10 @@ pub async fn start_mock_session(
         let evaluator = RuleEvaluator::new();
         let mut initialized = false;
         // Per-symbol last price from aggTrade ticks.
-        let mut last_prices: std::collections::HashMap<String, Decimal> = std::collections::HashMap::new();
-        let mut last_traded_candle: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
+        let mut last_prices: std::collections::HashMap<String, Decimal> =
+            std::collections::HashMap::new();
+        let mut last_traded_candle: std::collections::HashMap<String, u64> =
+            std::collections::HashMap::new();
 
         // The loop runs until the shutdown flag is set.
         loop {
@@ -293,7 +310,7 @@ pub async fn start_mock_session(
                         "4h" => Some(crate::types::Interval::H4),
                         _ => None,
                     };
-                    
+
                     if let Some(inv) = interval {
                         // Route candle to the correct symbol's MarketData.
                         let md = market_data_map
@@ -348,32 +365,58 @@ pub async fn start_mock_session(
                             let trade_md = match market_data_map.get(symbol) {
                                 Some(md) => md,
                                 None => {
-                                    log::warn!("[TRADE] No MarketData for {} yet — skipping", symbol);
+                                    log::warn!(
+                                        "[TRADE] No MarketData for {} yet — skipping",
+                                        symbol
+                                    );
                                     continue;
                                 }
                             };
 
                             // Duplicate Trade Guard — keyed on the trade symbol's candle time.
-                            let current_candle_time = trade_md.candles_15m.last().map(|c| c.timestamp.timestamp_millis() as u64).unwrap_or(0);
+                            let current_candle_time = trade_md
+                                .candles_15m
+                                .last()
+                                .map(|c| c.timestamp.timestamp_millis() as u64)
+                                .unwrap_or(0);
                             if let Some(&last_time) = last_traded_candle.get(symbol) {
                                 if last_time == current_candle_time {
-                                    log::debug!("[TRADE] Duplicate signal for candle {}, skipping.", current_candle_time);
+                                    log::debug!(
+                                        "[TRADE] Duplicate signal for candle {}, skipping.",
+                                        current_candle_time
+                                    );
                                     continue;
                                 }
                             }
 
                             // ── Entry price: use the TRADE SYMBOL's last aggTrade price ──
-                            let entry_price = last_prices.get(symbol).copied().unwrap_or_else(|| {
-                                // Fallback: use the trade symbol's last closed 15m candle close.
-                                trade_md.candles_15m.last()
-                                    .map(|c| c.close)
-                                    .unwrap_or(dec!(0))
-                            });
+                            let entry_price =
+                                last_prices.get(symbol).copied().unwrap_or_else(|| {
+                                    // Fallback: use the trade symbol's last closed 15m candle close.
+                                    trade_md
+                                        .candles_15m
+                                        .last()
+                                        .map(|c| c.close)
+                                        .unwrap_or(dec!(0))
+                                });
 
                             if entry_price == dec!(0) {
                                 log::warn!("[TRADE] Skipping — no price available for {}", symbol);
                                 continue;
                             }
+                            let direction = TradeDirection::Long;
+                            let slipped_entry_price = match direction {
+                                TradeDirection::Long => {
+                                    entry_price
+                                        * (Decimal::ONE
+                                            + crate::exchange::config::MOCK_SLIPPAGE_PCT)
+                                }
+                                TradeDirection::Short => {
+                                    entry_price
+                                        * (Decimal::ONE
+                                            - crate::exchange::config::MOCK_SLIPPAGE_PCT)
+                                }
+                            };
 
                             // Calculate position size via risk manager
                             let rm = risk_manager.lock().await;
@@ -383,7 +426,9 @@ pub async fn start_mock_session(
                                 continue;
                             }
 
-                            if trade_manager.active_trades().len() >= crate::exchange::config::MAX_OPEN_POSITIONS {
+                            if trade_manager.active_trades().len()
+                                >= crate::exchange::config::MAX_OPEN_POSITIONS
+                            {
                                 log::warn!("[TRADE] MAX_OPEN_POSITIONS guard hit — skipping entry");
                                 continue;
                             }
@@ -393,9 +438,21 @@ pub async fn start_mock_session(
                             let mut rsi_val = dec!(0);
                             let mut adx_val = dec!(0);
 
-                            let closes: Vec<f64> = trade_md.candles_15m.iter().map(|c| c.close.to_f64().unwrap_or(0.0)).collect();
-                            let highs: Vec<f64> = trade_md.candles_15m.iter().map(|c| c.high.to_f64().unwrap_or(0.0)).collect();
-                            let lows: Vec<f64> = trade_md.candles_15m.iter().map(|c| c.low.to_f64().unwrap_or(0.0)).collect();
+                            let closes: Vec<f64> = trade_md
+                                .candles_15m
+                                .iter()
+                                .map(|c| c.close.to_f64().unwrap_or(0.0))
+                                .collect();
+                            let highs: Vec<f64> = trade_md
+                                .candles_15m
+                                .iter()
+                                .map(|c| c.high.to_f64().unwrap_or(0.0))
+                                .collect();
+                            let lows: Vec<f64> = trade_md
+                                .candles_15m
+                                .iter()
+                                .map(|c| c.low.to_f64().unwrap_or(0.0))
+                                .collect();
 
                             if closes.len() > 14 {
                                 let mut tr_sum = 0.0;
@@ -409,9 +466,15 @@ pub async fn start_mock_session(
                                     tr_sum += tr1.max(tr2).max(tr3);
 
                                     let diff = closes[idx] - closes[idx - 1];
-                                    if diff > 0.0 { gains += diff; } else { losses -= diff; }
+                                    if diff > 0.0 {
+                                        gains += diff;
+                                    } else {
+                                        losses -= diff;
+                                    }
                                 }
-                                if let Some(atr) = rust_decimal::Decimal::from_f64_retain(tr_sum / 14.0) {
+                                if let Some(atr) =
+                                    rust_decimal::Decimal::from_f64_retain(tr_sum / 14.0)
+                                {
                                     atr_15m = atr;
                                 }
 
@@ -420,7 +483,9 @@ pub async fn start_mock_session(
                                     rsi_val = dec!(100);
                                 } else {
                                     let rs = (gains / 14.0) / avg_loss;
-                                    if let Some(rsi) = rust_decimal::Decimal::from_f64_retain(100.0 - (100.0 / (1.0 + rs))) {
+                                    if let Some(rsi) = rust_decimal::Decimal::from_f64_retain(
+                                        100.0 - (100.0 / (1.0 + rs)),
+                                    ) {
                                         rsi_val = rsi;
                                     }
                                 }
@@ -434,16 +499,21 @@ pub async fn start_mock_session(
                                 continue;
                             }
                             let atr_4h = atr_15m; // Proxy: use 15m ATR until 4H data accumulates.
-                            let stop_loss = entry_price - dec!(2) * atr_15m;
-                            let take_profit = entry_price + dec!(3) * atr_15m;
+                            let stop_loss = slipped_entry_price - dec!(2) * atr_15m;
+                            let take_profit = slipped_entry_price + dec!(3) * atr_15m;
 
                             log::info!(
-                                "[TRADE] {} entry={} | ATR={} | SL={} TP={}",
-                                symbol, entry_price, atr_15m, stop_loss, take_profit
+                                "[TRADE] {} raw_entry={} slipped_entry={} | ATR={} | SL={} TP={}",
+                                symbol,
+                                entry_price,
+                                slipped_entry_price,
+                                atr_15m,
+                                stop_loss,
+                                take_profit
                             );
 
                             match rm.calculate_position_size(
-                                entry_price,
+                                slipped_entry_price,
                                 stop_loss,
                                 atr_15m,
                                 atr_4h,
@@ -451,7 +521,7 @@ pub async fn start_mock_session(
                             ) {
                                 Ok(sizing) => {
                                     let trade_id = format!("mock-{}", uuid::Uuid::new_v4());
-                                    
+
                                     // Drop the risk manager lock before performing I/O via trade_manager
                                     drop(rm);
 
@@ -459,8 +529,8 @@ pub async fn start_mock_session(
                                     match trade_manager.open_trade(
                                         &trade_id,
                                         symbol,
-                                        TradeDirection::Long,
-                                        entry_price,
+                                        direction,
+                                        slipped_entry_price,
                                         stop_loss,
                                         take_profit,
                                         sizing.size,
@@ -471,16 +541,20 @@ pub async fn start_mock_session(
                                     ) {
                                         Ok(trade) => {
                                             // Update last_traded_candle since trade successfully opened
-                                            last_traded_candle.insert(symbol.to_string(), current_candle_time);
+                                            last_traded_candle
+                                                .insert(symbol.to_string(), current_candle_time);
 
                                             log::info!(
                                                 "[TRADE] ✅ ENTRY: {} {} @ {} | SL={} TP={} | Size={}",
-                                                trade.direction, trade.symbol, entry_price,
+                                                trade.direction, trade.symbol, slipped_entry_price,
                                                 stop_loss, take_profit, sizing.size
                                             );
                                         }
                                         Err(e) => {
-                                            log::error!("[TRADE] Failed to open trade in TradeManager: {}", e);
+                                            log::error!(
+                                                "[TRADE] Failed to open trade in TradeManager: {}",
+                                                e
+                                            );
                                         }
                                     }
                                 }
@@ -492,8 +566,17 @@ pub async fn start_mock_session(
                         Ok(false) => {
                             // Suppress spam for open candles
                         }
-                        Err(EvaluatorError::InsufficientData { required, got, interval }) => {
-                            log::debug!("[EVALUATOR] Insufficient data for {:?}: required {}, available {}", interval, required, got);
+                        Err(EvaluatorError::InsufficientData {
+                            required,
+                            got,
+                            interval,
+                        }) => {
+                            log::debug!(
+                                "[EVALUATOR] Insufficient data for {:?}: required {}, available {}",
+                                interval,
+                                required,
+                                got
+                            );
                         }
                         Err(e) => {
                             log::warn!("[EVALUATOR] Evaluation error: {:?}", e);
@@ -554,8 +637,8 @@ pub async fn get_trade_history() -> Result<Vec<TradeRecordDto>, String> {
         return Ok(Vec::new());
     }
 
-    let logger = CsvLogger::new(csv_path)
-        .map_err(|e| format!("Failed to open trades_log.csv: {}", e))?;
+    let logger =
+        CsvLogger::new(csv_path).map_err(|e| format!("Failed to open trades_log.csv: {}", e))?;
 
     let records = logger
         .read_all_records()
@@ -641,8 +724,7 @@ pub async fn save_api_credentials(api_key: String, api_secret: String) -> Result
 
     // ── Read the existing file (or start with an empty buffer) ────────────────
     let existing = if env_path.exists() {
-        std::fs::read_to_string(&env_path)
-            .map_err(|e| format!("Failed to read .env: {}", e))?
+        std::fs::read_to_string(&env_path).map_err(|e| format!("Failed to read .env: {}", e))?
     } else {
         String::new()
     };
@@ -680,10 +762,8 @@ pub async fn save_api_credentials(api_key: String, api_secret: String) -> Result
 
     // ── Write atomically (temp file + rename) ─────────────────────────────────
     let tmp_path = env_path.with_extension("env.tmp");
-    std::fs::write(&tmp_path, &output)
-        .map_err(|e| format!("Failed to write temp .env: {}", e))?;
-    std::fs::rename(&tmp_path, &env_path)
-        .map_err(|e| format!("Failed to finalise .env: {}", e))?;
+    std::fs::write(&tmp_path, &output).map_err(|e| format!("Failed to write temp .env: {}", e))?;
+    std::fs::rename(&tmp_path, &env_path).map_err(|e| format!("Failed to finalise .env: {}", e))?;
 
     // ── Reload into the live process so the new keys take effect immediately ──
     // We set env vars directly because dotenvy::dotenv() won't override already-

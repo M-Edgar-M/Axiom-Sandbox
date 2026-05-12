@@ -72,10 +72,7 @@ impl RiskParams {
             ));
         }
         if self.minimum_rr < 1.0 {
-            return Err(format!(
-                "minimum_rr {:.2} must be >= 1.0",
-                self.minimum_rr
-            ));
+            return Err(format!("minimum_rr {:.2} must be >= 1.0", self.minimum_rr));
         }
         Ok(())
     }
@@ -323,13 +320,19 @@ mod tests {
 
     #[test]
     fn test_risk_params_too_low() {
-        let r = RiskParams { risk_per_trade: 0.001, ..Default::default() };
+        let r = RiskParams {
+            risk_per_trade: 0.001,
+            ..Default::default()
+        };
         assert!(r.validate().is_err());
     }
 
     #[test]
     fn test_risk_params_too_high() {
-        let r = RiskParams { risk_per_trade: 0.1, ..Default::default() };
+        let r = RiskParams {
+            risk_per_trade: 0.1,
+            ..Default::default()
+        };
         assert!(r.validate().is_err());
     }
 

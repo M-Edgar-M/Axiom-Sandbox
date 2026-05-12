@@ -17,17 +17,19 @@
 //! the Tauri UI thread is never blocked.
 
 use std::sync::{
-    Arc,
     atomic::{AtomicBool, Ordering},
+    Arc,
 };
 
 use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
-use tokio::sync::{Mutex, mpsc};
+use tokio::sync::{mpsc, Mutex};
 
 use crate::exchange::{EngineConfig, ExecutionEngine};
 use crate::risk::RiskManager;
-use crate::websocket::{KlineEvent, ManagerConfig, OrderEvent, PriceTick, SystemEvent, WebSocketManager};
+use crate::websocket::{
+    KlineEvent, ManagerConfig, OrderEvent, PriceTick, SystemEvent, WebSocketManager,
+};
 
 /// Thread-safe application state managed by Tauri.
 ///

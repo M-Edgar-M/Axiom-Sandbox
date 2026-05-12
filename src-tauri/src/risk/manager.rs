@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use crate::types::{Balance, Price};
 
 use super::config;
-use super::sizing::{RiskError, SizingInput, SizingResult, calculate_position_size};
+use super::sizing::{calculate_position_size, RiskError, SizingInput, SizingResult};
 
 /// Trade result for recording P&L.
 #[derive(Debug, Clone, Serialize, Deserialize)]

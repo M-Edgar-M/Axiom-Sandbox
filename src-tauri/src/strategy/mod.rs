@@ -28,6 +28,6 @@ pub mod models;
 
 pub use evaluator::{EvaluatorError, RuleEvaluator};
 pub use models::{
-    EntryRule, MaCondition, MaRule, MaType, RiskParams, RsiCondition, RsiRule,
-    UserStrategyConfig, VolumeRule,
+    EntryRule, MaCondition, MaRule, MaType, RiskParams, RsiCondition, RsiRule, UserStrategyConfig,
+    VolumeRule,
 };

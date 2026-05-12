@@ -3,15 +3,15 @@
 use std::sync::Arc;
 use std::time::Duration;
 use thiserror::Error;
-use tokio::sync::{RwLock, mpsc};
+use tokio::sync::{mpsc, RwLock};
 use tokio::task::JoinHandle;
 
 use super::config;
 use super::connection::{CircuitBreaker, ConnectionError, WsConnection};
 use super::messages::{KlineEvent, OrderEvent, PriceTick, WsMessage};
 use super::streams::{
-    StreamEvent, StreamProcessor, StreamType, TrackedPosition, build_market_stream_url,
-    build_user_stream_url,
+    build_market_stream_url, build_user_stream_url, StreamEvent, StreamProcessor, StreamType,
+    TrackedPosition,
 };
 
 /// WebSocket manager errors.
