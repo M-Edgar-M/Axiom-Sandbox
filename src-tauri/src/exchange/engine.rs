@@ -428,6 +428,14 @@ async fn cancel_all_algo_orders(
 /// - `take_profit_price`   — limit price for the TP leg (TAKE_PROFIT_LIMIT)
 /// - `stop_loss_trigger`   — stop trigger price for the SL leg (STOP_LOSS_LIMIT)
 /// - `stop_loss_limit`     — limit price below (long) / above (short) the trigger
+/// Format a `Decimal` for Binance query strings.
+///
+/// Uses `normalize()` to strip trailing zeros (e.g. `1.1000` → `"1.1"`,
+/// `100.00` → `"100"`), avoiding precision-rejection errors from the exchange.
+fn fmt_dec(d: Decimal) -> String {
+    d.normalize().to_string()
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn place_futures_oco(
     api_key: &str,
@@ -435,10 +443,10 @@ async fn place_futures_oco(
     base_url: &str,
     symbol: &str,
     side: &str,
-    quantity: f64,
-    take_profit_price: f64,
-    stop_loss_trigger: f64,
-    stop_loss_limit: f64,
+    quantity: Decimal,
+    take_profit_price: Decimal,
+    stop_loss_trigger: Decimal,
+    stop_loss_limit: Decimal,
 ) -> Result<OcoOrderResult, ExecutionError> {
     let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -446,18 +454,18 @@ async fn place_futures_oco(
         .as_millis();
 
     // Binance USD-M Futures OCO endpoint.
-    // Both legs share the same quantity; the TP leg is a TAKE_PROFIT_LIMIT and
-    // the SL leg is a STOP_LOSS_LIMIT so fills guarantee a market-like execution.
+    // Prices and quantities are formatted from Decimal to avoid f64 precision
+    // artifacts that trigger LOT_SIZE / PRICE_FILTER rejection on the exchange.
     let query = format!(
-        "symbol={symbol}&side={side}&quantity={quantity}\
+        "symbol={symbol}&side={side}&quantity={qty}\
          &price={tp}&stopPrice={sl_trigger}&stopLimitPrice={sl_limit}\
          &stopLimitTimeInForce=GTC&timestamp={ts}",
         symbol = symbol,
         side = side,
-        quantity = quantity,
-        tp = take_profit_price,
-        sl_trigger = stop_loss_trigger,
-        sl_limit = stop_loss_limit,
+        qty = fmt_dec(quantity),
+        tp = fmt_dec(take_profit_price),
+        sl_trigger = fmt_dec(stop_loss_trigger),
+        sl_limit = fmt_dec(stop_loss_limit),
         ts = timestamp,
     );
 
@@ -797,6 +805,51 @@ impl ExecutionEngine {
         Ok(free + locked)
     }
 
+    /// Requests a Binance user data stream listen key via `POST /fapi/v1/listenKey`.
+    ///
+    /// The returned key is valid for 60 minutes.  Pass it into `ManagerConfig`
+    /// so the WebSocket layer can subscribe to `OrderUpdate` events in real time.
+    pub async fn create_listen_key(&self) -> Result<String, ExecutionError> {
+        let base_url = algo_base_url(self.config.testnet);
+        let url = format!("{}/fapi/v1/listenKey", base_url);
+
+        let client = reqwest::Client::new();
+        let resp = client
+            .post(&url)
+            .header("X-MBX-APIKEY", &self.config.api_key)
+            .send()
+            .await
+            .map_err(|e| ExecutionError::ExchangeError {
+                message: format!("Failed to create user data stream listen key: {}", e),
+            })?;
+
+        let status = resp.status();
+        let body: serde_json::Value = resp.json().await.map_err(|e| ExecutionError::ExchangeError {
+            message: format!("Failed to parse listenKey response: {}", e),
+        })?;
+
+        if !status.is_success() {
+            let code = body.get("code").and_then(|c| c.as_i64()).unwrap_or(-1);
+            let msg = body
+                .get("msg")
+                .and_then(|m| m.as_str())
+                .unwrap_or("unknown");
+            return Err(ExecutionError::ExchangeError {
+                message: format!(
+                    "Binance listenKey HTTP {} — code {}: {}",
+                    status, code, msg
+                ),
+            });
+        }
+
+        body.get("listenKey")
+            .and_then(|v| v.as_str())
+            .map(String::from)
+            .ok_or_else(|| ExecutionError::ExchangeError {
+                message: format!("No listenKey field in response: {}", body),
+            })
+    }
+
     /// Queries Binance exchange info and extracts LOT_SIZE / PRICE_FILTER for
     /// every symbol listed in `config.symbols`.
     fn fetch_symbol_filters(config: &EngineConfig) -> HashMap<String, SymbolFilters> {
@@ -876,11 +929,15 @@ impl ExecutionEngine {
         filters_map
     }
 
-    /// Returns the cached exchange filters for `symbol`.
-    fn filters_for(&self, symbol: &str) -> &SymbolFilters {
-        self.symbol_filters
-            .get(symbol)
-            .unwrap_or_else(|| panic!("[ENGINE] No symbol filters loaded for {}", symbol))
+    /// Returns the cached exchange filters for `symbol`, or an `ExecutionError`
+    /// if the symbol was not listed in `EngineConfig::symbols` at startup.
+    fn filters_for(&self, symbol: &str) -> Result<&SymbolFilters, ExecutionError> {
+        self.symbol_filters.get(symbol).ok_or_else(|| ExecutionError::ExchangeError {
+            message: format!(
+                "No exchange filters loaded for '{}' — add it to EngineConfig::symbols",
+                symbol
+            ),
+        })
     }
 
     // ── Safety Guards ────────────────────────────────────────────────────────
@@ -974,12 +1031,37 @@ impl ExecutionEngine {
         }
 
         // ── Live path ────────────────────────────────────────────────────────
-        let filters = self.filters_for(symbol);
+        let filters = self.filters_for(symbol)?;
         let sym = symbol.to_string();
-        let qty_f64 = round_qty_to_step(quantity, filters.step_size);
-        let sl_f64 = round_price_to_tick(stop_loss, filters.tick_size);
-        let tp_f64 = round_price_to_tick(take_profit, filters.tick_size);
         let is_long = matches!(direction, Position::Long);
+
+        // Enforce LOT_SIZE / PRICE_FILTER precision using exact Decimal arithmetic
+        // so the query string never carries floating-point artifacts like
+        // "0.00100000000001" that Binance rejects outright.
+        let qty_rounded = (quantity / filters.step_size).floor() * filters.step_size;
+        let sl_rounded = (stop_loss / filters.tick_size).round() * filters.tick_size;
+        let tp_rounded = (take_profit / filters.tick_size).round() * filters.tick_size;
+
+        // f64 copy used only by the binance-crate market_buy/sell call.
+        let qty_f64 = qty_rounded.to_f64().unwrap_or(0.0);
+
+        // Guard: reject orders the exchange will refuse before we even try.
+        if qty_f64 == 0.0 {
+            return Err(ExecutionError::ExchangeError {
+                message: format!(
+                    "Quantity {} rounds to zero for {} after applying step_size {} — position too small",
+                    quantity, symbol, filters.step_size
+                ),
+            });
+        }
+        if filters.min_qty > Decimal::ZERO && qty_rounded < filters.min_qty {
+            return Err(ExecutionError::ExchangeError {
+                message: format!(
+                    "Rounded quantity {} is below min_qty {} for {}",
+                    qty_rounded, filters.min_qty, symbol
+                ),
+            });
+        }
 
         // 1. Self-heal: clear both standard and conditional zombie orders
         {
@@ -1059,20 +1141,14 @@ impl ExecutionEngine {
         let close_side_str = if is_long { "SELL" } else { "BUY" };
 
         // The SL limit price sits slightly worse than the trigger so the limit
-        // order fills immediately on a stop-out (mirrors OcoOrderRequest logic).
-        let slippage_f64 = self.config.max_slippage.to_f64().unwrap_or(0.002);
-        let sl_limit_f64 = if is_long {
-            round_price_to_tick(
-                stop_loss * (Decimal::ONE - self.config.max_slippage),
-                filters.tick_size,
-            )
+        // order fills immediately on a stop-out.
+        let sl_limit_rounded = if is_long {
+            let raw = stop_loss * (Decimal::ONE - self.config.max_slippage);
+            (raw / filters.tick_size).round() * filters.tick_size
         } else {
-            round_price_to_tick(
-                stop_loss * (Decimal::ONE + self.config.max_slippage),
-                filters.tick_size,
-            )
+            let raw = stop_loss * (Decimal::ONE + self.config.max_slippage);
+            (raw / filters.tick_size).round() * filters.tick_size
         };
-        let _ = slippage_f64; // consumed via Decimal path above
 
         let oco_result = place_futures_oco(
             &self.config.api_key,
@@ -1080,10 +1156,10 @@ impl ExecutionEngine {
             base_url,
             &sym,
             close_side_str,
-            qty_f64,
-            tp_f64,
-            sl_f64,
-            sl_limit_f64,
+            qty_rounded,
+            tp_rounded,
+            sl_rounded,
+            sl_limit_rounded,
         )
         .await?;
 
@@ -1094,8 +1170,8 @@ impl ExecutionEngine {
             oco_result.order_list_id,
             oco_result.stop_loss_order_id,
             oco_result.take_profit_order_id,
-            sl_f64,
-            tp_f64
+            sl_rounded,
+            tp_rounded
         );
 
         // Persist all three OCO identifiers so execute_first_tp / activate_trailing_stop
@@ -1301,11 +1377,17 @@ impl ExecutionEngine {
         let take_profit = position.take_profit;
 
         if !self.mock_mode {
-            let filters = self.filters_for(symbol);
+            let filters = self.filters_for(symbol)?;
             let sym = symbol.to_string();
-            let qty_f64 = round_qty_to_step(quantity_to_close, filters.step_size);
-            let new_sl_f64 = round_price_to_tick(new_stop_loss, filters.tick_size);
-            let new_tp_f64 = round_price_to_tick(take_profit, filters.tick_size);
+
+            // Decimal-rounded values for exact query-string formatting.
+            let qty_rounded = (quantity_to_close / filters.step_size).floor() * filters.step_size;
+            let new_sl_rounded = (new_stop_loss / filters.tick_size).round() * filters.tick_size;
+            let new_tp_rounded = (take_profit / filters.tick_size).round() * filters.tick_size;
+
+            // f64 copy used only by the binance-crate partial-close market order.
+            let qty_f64 = qty_rounded.to_f64().unwrap_or(0.0);
+
             let is_long = matches!(direction, Position::Long);
             let base_url = algo_base_url(self.config.testnet);
 
@@ -1379,23 +1461,19 @@ impl ExecutionEngine {
             let close_side_str = if is_long { "SELL" } else { "BUY" };
 
             // Recalculate SL limit for the new breakeven level.
-            let new_sl_limit_f64 = if is_long {
-                round_price_to_tick(
-                    new_stop_loss * (Decimal::ONE - self.config.max_slippage),
-                    filters.tick_size,
-                )
+            let new_sl_limit_rounded = if is_long {
+                let raw = new_stop_loss * (Decimal::ONE - self.config.max_slippage);
+                (raw / filters.tick_size).round() * filters.tick_size
             } else {
-                round_price_to_tick(
-                    new_stop_loss * (Decimal::ONE + self.config.max_slippage),
-                    filters.tick_size,
-                )
+                let raw = new_stop_loss * (Decimal::ONE + self.config.max_slippage);
+                (raw / filters.tick_size).round() * filters.tick_size
             };
 
             // The partial close reduced the quantity; use the remaining size.
-            let remaining_qty_f64 = round_qty_to_step(
-                position.current_quantity - quantity_to_close,
-                filters.step_size,
-            );
+            let remaining_qty_rounded = {
+                let remaining = position.current_quantity - quantity_to_close;
+                (remaining / filters.step_size).floor() * filters.step_size
+            };
 
             let new_oco = place_futures_oco(
                 &self.config.api_key,
@@ -1403,10 +1481,10 @@ impl ExecutionEngine {
                 base_url,
                 &sym,
                 close_side_str,
-                remaining_qty_f64,
-                new_tp_f64,
-                new_sl_f64,
-                new_sl_limit_f64,
+                remaining_qty_rounded,
+                new_tp_rounded,
+                new_sl_rounded,
+                new_sl_limit_rounded,
             )
             .await?;
 
@@ -1417,8 +1495,8 @@ impl ExecutionEngine {
                 new_oco.order_list_id,
                 new_oco.stop_loss_order_id,
                 new_oco.take_profit_order_id,
-                new_sl_f64,
-                new_tp_f64
+                new_sl_rounded,
+                new_tp_rounded
             );
 
             // Update all three OCO identifiers so activate_trailing_stop / close_position
@@ -1566,13 +1644,15 @@ impl ExecutionEngine {
         }
 
         if !self.mock_mode {
-            let filters = self.filters_for(symbol);
+            let filters = self.filters_for(symbol)?;
             let sym = symbol.to_string();
             let sl_id = position.stop_loss_order_id;
             let tp_id = position.take_profit_order_id;
             let trail_id = position.trailing_stop_order_id;
             let is_long = matches!(position.direction, Position::Long);
-            let remaining_qty = round_qty_to_step(position.current_quantity, filters.step_size);
+            let remaining_qty_rounded =
+                (position.current_quantity / filters.step_size).floor() * filters.step_size;
+            let remaining_qty = remaining_qty_rounded.to_f64().unwrap_or(0.0);
             let base_url = algo_base_url(self.config.testnet);
 
             // 1. Cancel all known conditional orders (best-effort, algo API)
@@ -1716,6 +1796,37 @@ impl ExecutionEngine {
 mod tests {
     use super::*;
     use rust_decimal_macros::dec;
+
+    // ── Precision rounding helpers ───────────────────────────────────────────
+
+    #[test]
+    fn test_round_qty_to_step_precision() {
+        // 0.12345 / 0.001 = 123.45 → floor(123.45) = 123 → 123 * 0.001 = 0.123
+        let result = round_qty_to_step(dec!(0.12345), dec!(0.001));
+        assert_eq!(result, 0.123_f64);
+    }
+
+    #[test]
+    fn test_round_qty_to_step_whole_unit() {
+        // 1.9 / 1 = 1.9 → floor = 1 → 1 * 1 = 1
+        let result = round_qty_to_step(dec!(1.9), dec!(1));
+        assert_eq!(result, 1.0_f64);
+    }
+
+    #[test]
+    fn test_round_price_to_tick_rounding() {
+        // 30000.155 / 0.10 = 300001.55 → round = 300002 → 300002 * 0.10 = 30000.2
+        let result = round_price_to_tick(dec!(30000.155), dec!(0.10));
+        assert_eq!(result, 30000.2_f64);
+    }
+
+    #[test]
+    fn test_fmt_dec_strips_trailing_zeros() {
+        assert_eq!(fmt_dec(dec!(1.1000)), "1.1");
+        assert_eq!(fmt_dec(dec!(100.00)), "100");
+        assert_eq!(fmt_dec(dec!(0.001)), "0.001");
+        assert_eq!(fmt_dec(dec!(30000.10)), "30000.1");
+    }
 
     // ── fetch_account_balance JSON parsing ───────────────────────────────────
 

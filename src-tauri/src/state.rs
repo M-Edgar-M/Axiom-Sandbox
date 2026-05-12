@@ -76,6 +76,10 @@ impl AppState {
 
     /// Builds a [`WebSocketManager`] + channel set for the given symbols/intervals.
     ///
+    /// `listen_key` — when `Some`, the user data stream is enabled so the engine
+    /// receives live `OrderUpdate` events directly from Binance.  Pass `None` to
+    /// disable the user data stream (market data only).
+    ///
     /// The `system_rx` end is stored in `self.system_rx` so IPC commands can poll
     /// reconnect signals without holding the full `ws_manager` lock.
     ///
@@ -84,6 +88,7 @@ impl AppState {
         &self,
         symbols: Vec<String>,
         intervals: Vec<String>,
+        listen_key: Option<String>,
     ) -> (
         mpsc::Receiver<PriceTick>,
         mpsc::Receiver<OrderEvent>,
@@ -94,12 +99,13 @@ impl AppState {
         let (kline_tx, kline_rx) = mpsc::channel(256);
         let (system_tx, system_rx) = mpsc::channel(32);
 
+        let enable_user = listen_key.is_some();
         let cfg = ManagerConfig {
             symbols,
             intervals,
-            listen_key: None,
+            listen_key,
             enable_market_stream: true,
-            enable_user_stream: false,
+            enable_user_stream: enable_user,
         };
 
         let manager = WebSocketManager::new(cfg, price_tx, order_tx, kline_tx, system_tx);

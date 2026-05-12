@@ -63,7 +63,7 @@ impl Default for ManagerConfig {
             intervals: vec!["15m".to_string(), "1h".to_string(), "4h".to_string()],
             listen_key: None,
             enable_market_stream: true,
-            enable_user_stream: false,
+            enable_user_stream: true,
         }
     }
 }
@@ -451,7 +451,7 @@ mod tests {
     async fn test_manager_config_default() {
         let config = ManagerConfig::default();
         assert!(config.enable_market_stream);
-        assert!(!config.enable_user_stream);
+        assert!(config.enable_user_stream);
         assert!(config.symbols.contains(&"BTCUSDT".to_string()));
         assert!(config.symbols.contains(&"ETHUSDT".to_string()));
         assert!(config.symbols.contains(&"SOLUSDT".to_string()));

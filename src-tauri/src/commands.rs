@@ -160,9 +160,34 @@ pub async fn start_mock_session(
         config.name, is_live_mode
     );
 
-    // ── Build the engine — always Binance Testnet for paper trading ──────
-    let api_key = std::env::var("BINANCE_API_KEY").unwrap_or_default();
-    let api_secret = std::env::var("BINANCE_API_SECRET").unwrap_or_default();
+    // ── Build the engine — load credentials for the selected environment ──
+    // Testnet and Live Binance accounts use different API keys.
+    // The UI writes them to separate env vars so the wrong key can never
+    // accidentally hit the wrong endpoint.
+    let (api_key, api_secret) = if is_live_mode {
+        (
+            std::env::var("BINANCE_API_KEY").unwrap_or_default(),
+            std::env::var("BINANCE_API_SECRET").unwrap_or_default(),
+        )
+    } else {
+        (
+            std::env::var("BINANCE_TESTNET_API_KEY").unwrap_or_default(),
+            std::env::var("BINANCE_TESTNET_API_SECRET").unwrap_or_default(),
+        )
+    };
+
+    if api_key.is_empty() || api_secret.is_empty() {
+        let env_hint = if is_live_mode {
+            "BINANCE_API_KEY / BINANCE_API_SECRET"
+        } else {
+            "BINANCE_TESTNET_API_KEY / BINANCE_TESTNET_API_SECRET"
+        };
+        warn!(
+            "[IPC] {} not set — open API Credentials and save {} keys first",
+            env_hint,
+            if is_live_mode { "Live" } else { "Testnet" }
+        );
+    }
 
     let engine_config = crate::exchange::EngineConfig {
         api_key,
@@ -185,6 +210,23 @@ pub async fn start_mock_session(
         .map_err(|e| format!("Failed to fetch Testnet USDT balance: {:?}", e))?;
 
     info!("[IPC] Testnet USDT balance: {}", testnet_balance);
+
+    // Request a user data stream listen key so the WebSocket layer can receive
+    // live OrderUpdate events.  A failure here is non-fatal — we degrade
+    // gracefully to market-data-only rather than aborting the session.
+    let listen_key = match engine.create_listen_key().await {
+        Ok(key) => {
+            info!("[IPC] User data stream listen key obtained");
+            Some(key)
+        }
+        Err(e) => {
+            warn!(
+                "[IPC] Failed to obtain listen key — OrderUpdate stream disabled: {:?}",
+                e
+            );
+            None
+        }
+    };
 
     *state.engine.lock().await = Some(engine);
 
@@ -245,7 +287,8 @@ pub async fn start_mock_session(
     }
 
     // ── Start the WebSocket stack ─────────────────────────────────────────
-    let (mut price_rx, _order_rx, mut kline_rx) = state.build_ws_stack(symbols, intervals).await;
+    let (mut price_rx, _order_rx, mut kline_rx) =
+        state.build_ws_stack(symbols, intervals, listen_key).await;
 
     // Start the WS manager (takes &mut self — must hold the lock briefly).
     {
@@ -723,14 +766,22 @@ pub async fn get_system_status(state: State<'_, AppState>) -> Result<SystemStatu
 ///   starts with the new credentials without requiring an app restart.
 /// - The `.env` file is git-ignored and lives only on the user's machine.
 ///
+/// ## Environment model
+/// Testnet and Live Binance accounts have **completely different** API keys.
+/// `mode` selects which pair of env vars to write:
+/// - `"testnet"` → `BINANCE_TESTNET_API_KEY` / `BINANCE_TESTNET_API_SECRET`
+/// - `"live"`    → `BINANCE_API_KEY`          / `BINANCE_API_SECRET`
+///
 /// ## Behaviour
-/// - If `BINANCE_API_KEY=` / `BINANCE_API_SECRET=` lines already exist they are
-///   updated in-place, preserving all other lines (comments, `BINANCE_TESTNET`,
-///   etc.).
-/// - If they do not exist, the lines are appended.
+/// - Matching lines in `.env` are updated in-place; all other lines are kept.
+/// - Missing lines are appended.
 /// - An empty `api_key` or `api_secret` is rejected before any file I/O.
 #[tauri::command]
-pub async fn save_api_credentials(api_key: String, api_secret: String) -> Result<(), String> {
+pub async fn save_api_credentials(
+    api_key: String,
+    api_secret: String,
+    mode: String,
+) -> Result<(), String> {
     // ── Validate inputs ───────────────────────────────────────────────────────
     let api_key = api_key.trim().to_string();
     let api_secret = api_secret.trim().to_string();
@@ -742,18 +793,29 @@ pub async fn save_api_credentials(api_key: String, api_secret: String) -> Result
         return Err("API secret must not be empty.".to_string());
     }
 
-    info!("[CREDENTIALS] Received save_api_credentials — updating .env");
+    // Derive env-var names from the selected environment.
+    let is_testnet = mode.trim() != "live";
+    let (key_var, secret_var) = if is_testnet {
+        ("BINANCE_TESTNET_API_KEY", "BINANCE_TESTNET_API_SECRET")
+    } else {
+        ("BINANCE_API_KEY", "BINANCE_API_SECRET")
+    };
+
+    info!(
+        "[CREDENTIALS] Saving {} credentials → {}=… {}=…",
+        if is_testnet { "Testnet" } else { "Live" },
+        key_var,
+        secret_var
+    );
 
     // ── Resolve the .env path (same directory as the running binary) ──────────
-    // `std::env::current_exe()` gives us the Tauri binary; we place `.env`
-    // next to it so `dotenvy::dotenv()` at startup always finds it.
     let env_path = std::env::current_exe()
         .map_err(|e| format!("Cannot locate binary directory: {}", e))?
         .parent()
         .ok_or_else(|| "Binary has no parent directory".to_string())?
         .join(".env");
 
-    // Also try the current working directory as a fallback (matches dev builds).
+    // Fallback: current working directory (matches dev builds).
     let env_path = if env_path.exists() {
         env_path
     } else {
@@ -768,18 +830,20 @@ pub async fn save_api_credentials(api_key: String, api_secret: String) -> Result
     };
 
     // ── Rewrite lines, updating matching keys in-place ────────────────────────
+    let key_prefix = format!("{}=", key_var);
+    let secret_prefix = format!("{}=", secret_var);
     let mut key_written = false;
     let mut secret_written = false;
 
     let mut new_lines: Vec<String> = existing
         .lines()
         .map(|line| {
-            if line.starts_with("BINANCE_API_KEY=") {
+            if line.starts_with(&key_prefix) {
                 key_written = true;
-                format!("BINANCE_API_KEY={}", api_key)
-            } else if line.starts_with("BINANCE_API_SECRET=") {
+                format!("{}={}", key_var, api_key)
+            } else if line.starts_with(&secret_prefix) {
                 secret_written = true;
-                format!("BINANCE_API_SECRET={}", api_secret)
+                format!("{}={}", secret_var, api_secret)
             } else {
                 line.to_string()
             }
@@ -788,10 +852,10 @@ pub async fn save_api_credentials(api_key: String, api_secret: String) -> Result
 
     // Append any keys that were not found.
     if !key_written {
-        new_lines.push(format!("BINANCE_API_KEY={}", api_key));
+        new_lines.push(format!("{}={}", key_var, api_key));
     }
     if !secret_written {
-        new_lines.push(format!("BINANCE_API_SECRET={}", api_secret));
+        new_lines.push(format!("{}={}", secret_var, api_secret));
     }
 
     // Ensure a trailing newline.
@@ -801,13 +865,12 @@ pub async fn save_api_credentials(api_key: String, api_secret: String) -> Result
     // ── Write atomically (temp file + rename) ─────────────────────────────────
     let tmp_path = env_path.with_extension("env.tmp");
     std::fs::write(&tmp_path, &output).map_err(|e| format!("Failed to write temp .env: {}", e))?;
-    std::fs::rename(&tmp_path, &env_path).map_err(|e| format!("Failed to finalise .env: {}", e))?;
+    std::fs::rename(&tmp_path, &env_path)
+        .map_err(|e| format!("Failed to finalise .env: {}", e))?;
 
     // ── Reload into the live process so the new keys take effect immediately ──
-    // We set env vars directly because dotenvy::dotenv() won't override already-
-    // set values in the current process.
-    std::env::set_var("BINANCE_API_KEY", &api_key);
-    std::env::set_var("BINANCE_API_SECRET", &api_secret);
+    std::env::set_var(key_var, &api_key);
+    std::env::set_var(secret_var, &api_secret);
 
     info!("[CREDENTIALS] .env updated and process environment refreshed.");
     Ok(())
