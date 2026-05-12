@@ -55,8 +55,12 @@ pub struct ManagerConfig {
 impl Default for ManagerConfig {
     fn default() -> Self {
         Self {
-            symbols: vec!["BTCUSDT".to_string()],
-            intervals: vec!["1h".to_string()],
+            symbols: vec![
+                "BTCUSDT".to_string(),
+                "ETHUSDT".to_string(),
+                "SOLUSDT".to_string(),
+            ],
+            intervals: vec!["15m".to_string(), "1h".to_string(), "4h".to_string()],
             listen_key: None,
             enable_market_stream: true,
             enable_user_stream: false,
@@ -449,6 +453,12 @@ mod tests {
         assert!(config.enable_market_stream);
         assert!(!config.enable_user_stream);
         assert!(config.symbols.contains(&"BTCUSDT".to_string()));
+        assert!(config.symbols.contains(&"ETHUSDT".to_string()));
+        assert!(config.symbols.contains(&"SOLUSDT".to_string()));
+        assert_eq!(config.symbols.len(), 3);
+        assert!(config.intervals.contains(&"15m".to_string()));
+        assert!(config.intervals.contains(&"1h".to_string()));
+        assert!(config.intervals.contains(&"4h".to_string()));
     }
 
     #[tokio::test]

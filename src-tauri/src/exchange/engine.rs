@@ -699,31 +699,102 @@ impl ExecutionEngine {
         }
     }
 
-    /// Creates a mock `ExecutionEngine` (no exchange calls).
+    /// Fetches the current USDT balance from the Binance Testnet account.
     ///
-    /// Populates `symbol_filters` with safe defaults so tests work without
-    /// hitting the network.
-    pub fn new_mock() -> Self {
-        use rust_decimal_macros::dec;
+    /// Makes a signed `GET /fapi/v2/account` request and returns
+    /// `availableBalance` (free) + margin-in-use (locked), which equals
+    /// `walletBalance` — the canonical total USDT wallet balance.
+    pub async fn fetch_account_balance(&self) -> Result<Decimal, ExecutionError> {
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock before UNIX epoch")
+            .as_millis();
 
-        let mut symbol_filters = HashMap::new();
-        for sym in &config::TOP_COINS {
-            symbol_filters.insert(
-                sym.to_string(),
-                SymbolFilters {
-                    step_size: dec!(0.001),
-                    tick_size: dec!(0.01),
-                    min_qty: dec!(0.001),
-                },
-            );
+        let query = format!("timestamp={}", timestamp);
+        let signature = hmac_sign(&query, &self.config.api_secret);
+        let base_url = algo_base_url(self.config.testnet);
+        let url = format!(
+            "{}/fapi/v2/account?{}&signature={}",
+            base_url, query, signature
+        );
+
+        let client = reqwest::Client::new();
+        let resp = client
+            .get(&url)
+            .header("X-MBX-APIKEY", &self.config.api_key)
+            .send()
+            .await
+            .map_err(|e| ExecutionError::ExchangeError {
+                message: format!("Failed to fetch account info: {}", e),
+            })?;
+
+        let status = resp.status();
+        let body: serde_json::Value =
+            resp.json()
+                .await
+                .map_err(|e| ExecutionError::ExchangeError {
+                    message: format!("Failed to parse account info JSON: {}", e),
+                })?;
+
+        if !status.is_success() {
+            let code = body.get("code").and_then(|c| c.as_i64()).unwrap_or(-1);
+            let msg = body
+                .get("msg")
+                .and_then(|m| m.as_str())
+                .unwrap_or("unknown");
+            return Err(ExecutionError::ExchangeError {
+                message: format!(
+                    "Binance account HTTP {} — code {}: {}",
+                    status, code, msg
+                ),
+            });
         }
 
-        Self {
-            config: EngineConfig::default(),
-            positions: Arc::new(RwLock::new(HashMap::new())),
-            symbol_filters,
-            mock_mode: true,
-        }
+        Self::parse_usdt_balance_from_json(&body)
+    }
+
+    /// Parses USDT `walletBalance` (free + locked) from a Binance futures
+    /// `/fapi/v2/account` JSON response.
+    ///
+    /// Extracted as a pure function so it can be called directly in unit tests
+    /// without network access.
+    fn parse_usdt_balance_from_json(body: &serde_json::Value) -> Result<Decimal, ExecutionError> {
+        let assets = body
+            .get("assets")
+            .and_then(|v| v.as_array())
+            .ok_or_else(|| ExecutionError::ExchangeError {
+                message: "account_information response missing 'assets' array".to_string(),
+            })?;
+
+        let usdt = assets
+            .iter()
+            .find(|a| a.get("asset").and_then(|v| v.as_str()) == Some("USDT"))
+            .ok_or_else(|| ExecutionError::ExchangeError {
+                message: "USDT asset not found in account information".to_string(),
+            })?;
+
+        // free  = availableBalance (margin not yet committed)
+        // total = walletBalance    (free + all committed margin)
+        let free: Decimal = usdt
+            .get("availableBalance")
+            .and_then(|v| v.as_str())
+            .unwrap_or("0")
+            .parse()
+            .map_err(|_| ExecutionError::ExchangeError {
+                message: "Failed to parse USDT availableBalance".to_string(),
+            })?;
+
+        let wallet: Decimal = usdt
+            .get("walletBalance")
+            .and_then(|v| v.as_str())
+            .unwrap_or("0")
+            .parse()
+            .map_err(|_| ExecutionError::ExchangeError {
+                message: "Failed to parse USDT walletBalance".to_string(),
+            })?;
+
+        let locked = wallet - free;
+        Ok(free + locked)
     }
 
     /// Queries Binance exchange info and extracts LOT_SIZE / PRICE_FILTER for
@@ -1614,12 +1685,76 @@ impl ExecutionEngine {
     }
 }
 
-// ─── Tests (all use mock mode) ───────────────────────────────────────────────
+// ─── Tests ───────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+impl ExecutionEngine {
+    /// Builds a mock engine for unit tests — bypasses all exchange calls.
+    fn new_mock() -> Self {
+        use rust_decimal_macros::dec;
+        let mut symbol_filters = HashMap::new();
+        for sym in &config::TOP_COINS {
+            symbol_filters.insert(
+                sym.to_string(),
+                SymbolFilters {
+                    step_size: dec!(0.001),
+                    tick_size: dec!(0.01),
+                    min_qty: dec!(0.001),
+                },
+            );
+        }
+        Self {
+            config: EngineConfig::default(),
+            positions: Arc::new(RwLock::new(HashMap::new())),
+            symbol_filters,
+            mock_mode: true,
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use rust_decimal_macros::dec;
+
+    // ── fetch_account_balance JSON parsing ───────────────────────────────────
+
+    #[test]
+    fn test_fetch_account_balance_parses_json() {
+        let mock_response = serde_json::json!({
+            "assets": [
+                {
+                    "asset": "BNB",
+                    "walletBalance": "0.50000000",
+                    "availableBalance": "0.50000000"
+                },
+                {
+                    "asset": "USDT",
+                    "walletBalance": "12345.67",
+                    "availableBalance": "10000.00"
+                }
+            ]
+        });
+
+        let balance =
+            ExecutionEngine::parse_usdt_balance_from_json(&mock_response).unwrap();
+        // free (10000.00) + locked (2345.67) == walletBalance (12345.67)
+        assert_eq!(balance, dec!(12345.67));
+    }
+
+    #[test]
+    fn test_fetch_account_balance_missing_usdt() {
+        let mock_response = serde_json::json!({ "assets": [{ "asset": "BNB", "walletBalance": "1.0", "availableBalance": "1.0" }] });
+        assert!(ExecutionEngine::parse_usdt_balance_from_json(&mock_response).is_err());
+    }
+
+    #[test]
+    fn test_fetch_account_balance_missing_assets() {
+        let mock_response = serde_json::json!({ "feeTier": 0 });
+        assert!(ExecutionEngine::parse_usdt_balance_from_json(&mock_response).is_err());
+    }
+
+    // ── Existing mock-mode tests (use test-only constructor above) ───────────
 
     #[tokio::test]
     async fn test_open_position_mock() {

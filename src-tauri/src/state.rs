@@ -25,7 +25,7 @@ use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
 use tokio::sync::{mpsc, Mutex};
 
-use crate::exchange::{EngineConfig, ExecutionEngine};
+use crate::exchange::ExecutionEngine;
 use crate::risk::RiskManager;
 use crate::websocket::{
     KlineEvent, ManagerConfig, OrderEvent, PriceTick, SystemEvent, WebSocketManager,
@@ -108,20 +108,6 @@ impl AppState {
         *self.system_rx.lock().await = Some(system_rx);
 
         (price_rx, order_rx, kline_rx)
-    }
-
-    /// Builds a mock [`ExecutionEngine`] (testnet: true, no real HTTP calls).
-    pub async fn build_mock_engine(&self) {
-        let config = EngineConfig {
-            api_key: std::env::var("BINANCE_API_KEY").unwrap_or_default(),
-            api_secret: std::env::var("BINANCE_API_SECRET").unwrap_or_default(),
-            testnet: true, // ← Always testnet for mock sessions.
-            ..Default::default()
-        };
-
-        *self.engine.lock().await = Some(ExecutionEngine::new_mock());
-        // config is kept for reference; the mock engine ignores exchange calls.
-        let _ = config;
     }
 
     /// Sends the WebSocket shutdown signal and marks session inactive.

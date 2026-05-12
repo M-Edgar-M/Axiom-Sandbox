@@ -27,14 +27,22 @@ pub const TRAILING_ACTIVATION_R: Decimal = dec!(2.5);
 /// ATR multiplier for trailing stop offset.
 pub const TRAILING_ATR_MULTIPLIER: Decimal = dec!(2.0);
 
-/// Top 10 coins by market cap (for slippage rules).
+/// High-liquidity symbols permitted for trading.
+///
+/// Any symbol in this list passes the liquidity guardrail inside
+/// `ExecutionEngine` and receives the tighter `MAX_SLIPPAGE_PCT` limit.
+/// The three **active trading symbols** (BTC, ETH, SOL) are listed first;
+/// the remaining entries are legacy or ancillary symbols kept for
+/// compatibility with existing strategy configs.
 pub const TOP_COINS: [&str; 10] = [
-    "BTCUSDT",
-    "ETHUSDT",
+    // ── Active trading universe ─────────────────────────────────────────
+    "BTCUSDT",   // trend reference + traded
+    "ETHUSDT",   // traded
+    "SOLUSDT",   // traded
+    // ── Ancillary / legacy ──────────────────────────────────────────────
     "BNBUSDT",
     "XRPUSDT",
     "ADAUSDT",
-    "SOLUSDT",
     "DOGEUSDT",
     "DOTUSDT",
     "1000BONKUSDT",

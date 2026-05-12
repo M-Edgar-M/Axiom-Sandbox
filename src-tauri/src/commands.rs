@@ -160,7 +160,7 @@ pub async fn start_mock_session(
         config.name, is_live_mode
     );
 
-    // ── Build the engine (mock or live) ───────────────────────────────────
+    // ── Build the engine — always Binance Testnet for paper trading ──────
     let api_key = std::env::var("BINANCE_API_KEY").unwrap_or_default();
     let api_secret = std::env::var("BINANCE_API_SECRET").unwrap_or_default();
 
@@ -168,16 +168,29 @@ pub async fn start_mock_session(
         api_key,
         api_secret,
         testnet: !is_live_mode,
-        symbols: vec!["BTCUSDT".to_string()],
+        symbols: vec![
+            "BTCUSDT".to_string(),
+            "ETHUSDT".to_string(),
+            "SOLUSDT".to_string(),
+        ],
         ..Default::default()
     };
 
-    let engine = if is_live_mode {
-        crate::exchange::ExecutionEngine::new(engine_config).await
-    } else {
-        crate::exchange::ExecutionEngine::new_mock()
-    };
+    let engine = crate::exchange::ExecutionEngine::new(engine_config).await;
+
+    // Fetch the real USDT balance from Binance Testnet and seed the risk manager.
+    let testnet_balance = engine
+        .fetch_account_balance()
+        .await
+        .map_err(|e| format!("Failed to fetch Testnet USDT balance: {:?}", e))?;
+
+    info!("[IPC] Testnet USDT balance: {}", testnet_balance);
+
     *state.engine.lock().await = Some(engine);
+
+    // Reinitialise the risk manager with the live Testnet balance — replaces
+    // any previous session state and removes the hardcoded $10 000 seed.
+    *state.risk_manager.lock().await = crate::risk::RiskManager::new(testnet_balance);
 
     // ── Extract required intervals from config ────────────────────────────
     let mut required_intervals = std::collections::HashSet::new();
@@ -195,12 +208,16 @@ pub async fn start_mock_session(
         }
     }
 
-    // ── Extract symbols from config entry rules for WS subscriptions ──────
-    // BTCUSDT provides the trend-alignment reference for the evaluator.
-    // 1000BONKUSDT is the active trading symbol for high-volatility OCO stress testing.
-    let btc_symbol = "BTCUSDT".to_string();
-    let trade_symbol = "1000BONKUSDT".to_string();
-    let symbols = vec![btc_symbol.clone(), trade_symbol.clone()];
+    // ── Trading universe ─────────────────────────────────────────────────
+    // All three symbols are subscribed, backfilled, and evaluated
+    // independently. Each symbol runs its own signal check and can open a
+    // position when its own indicators satisfy the entry rules.
+    let trade_symbols: Vec<String> = vec![
+        "BTCUSDT".to_string(),
+        "ETHUSDT".to_string(),
+        "SOLUSDT".to_string(),
+    ];
+    let symbols = trade_symbols.clone();
     let intervals = vec!["15m".to_string(), "1h".to_string(), "4h".to_string()];
 
     // ── Add Historical Backfill (per-symbol) ──────────────────────────────
@@ -272,8 +289,9 @@ pub async fn start_mock_session(
     let session_flag = state.session_active.clone();
     let strategy_config = config.clone();
     let risk_manager = state.risk_manager.clone();
-    // The active trading symbol passed into the loop closure.
-    let active_trade_symbol = trade_symbol.clone();
+    // Clone the full trading universe into the closure so the loop can
+    // evaluate every symbol independently on each kline event.
+    let trade_symbols_inner = trade_symbols.clone();
 
     tokio::spawn(async move {
         info!("[SESSION] Execution loop started");
@@ -337,251 +355,271 @@ pub async fn start_mock_session(
                     }
                 }
 
-                // Initialise once BTC has 15m data (the evaluator needs BTC for trend signals).
+                // Initialise once any subscribed symbol has accumulated 15m candles.
                 if !initialized {
-                    if let Some(btc_md) = market_data_map.get(&btc_symbol) {
-                        if !btc_md.candles_15m.is_empty() {
-                            initialized = true;
-                            info!("[SESSION] Engine initialized with BTC 15m candles");
-                        }
+                    if trade_symbols_inner.iter().any(|s| {
+                        market_data_map
+                            .get(s.as_str())
+                            .map_or(false, |md| !md.candles_15m.is_empty())
+                    }) {
+                        initialized = true;
+                        info!("[SESSION] Engine initialized — trading universe ready");
                     }
                 }
 
                 if initialized {
-                    // Evaluator uses BTC data for trend-alignment signals.
-                    let btc_md = match market_data_map.get(&btc_symbol) {
-                        Some(md) => md,
-                        None => continue,
-                    };
+                    // Evaluate every symbol in the trading universe independently.
+                    // Each symbol uses its own MarketData so signals fire per-asset.
+                    'symbol_loop: for sym in &trade_symbols_inner {
+                        let symbol = sym.as_str();
 
-                    match evaluator.evaluate(btc_md, &strategy_config) {
-                        Ok(true) => {
-                            log::info!("[EVALUATOR] Signal generated: conditions met!");
+                        let trade_md = match market_data_map.get(symbol) {
+                            Some(md) => md,
+                            None => {
+                                log::warn!(
+                                    "[TRADE] No MarketData for {} yet — skipping",
+                                    symbol
+                                );
+                                continue 'symbol_loop;
+                            }
+                        };
 
-                            // Trade symbol is the volatile coin, NOT BTCUSDT.
-                            let symbol = active_trade_symbol.as_str();
+                        match evaluator.evaluate(trade_md, &strategy_config) {
+                            Ok(true) => {
+                                log::info!("[EVALUATOR] Signal on {}: conditions met!", symbol);
 
-                            // Get the trade symbol's own MarketData for price/indicators.
-                            let trade_md = match market_data_map.get(symbol) {
-                                Some(md) => md,
-                                None => {
+                                // Duplicate Trade Guard — keyed on the symbol's candle time.
+                                let current_candle_time = trade_md
+                                    .candles_15m
+                                    .last()
+                                    .map(|c| c.timestamp.timestamp_millis() as u64)
+                                    .unwrap_or(0);
+                                if let Some(&last_time) = last_traded_candle.get(symbol) {
+                                    if last_time == current_candle_time {
+                                        log::debug!(
+                                            "[TRADE] Duplicate signal for {} candle {}, skipping.",
+                                            symbol, current_candle_time
+                                        );
+                                        continue 'symbol_loop;
+                                    }
+                                }
+
+                                // Entry price: prefer live aggTrade tick, fall back to kline close.
+                                let entry_price =
+                                    last_prices.get(symbol).copied().unwrap_or_else(|| {
+                                        trade_md
+                                            .candles_15m
+                                            .last()
+                                            .map(|c| c.close)
+                                            .unwrap_or(dec!(0))
+                                    });
+
+                                if entry_price == dec!(0) {
                                     log::warn!(
-                                        "[TRADE] No MarketData for {} yet — skipping",
+                                        "[TRADE] Skipping — no price available for {}",
                                         symbol
                                     );
-                                    continue;
+                                    continue 'symbol_loop;
                                 }
-                            };
 
-                            // Duplicate Trade Guard — keyed on the trade symbol's candle time.
-                            let current_candle_time = trade_md
-                                .candles_15m
-                                .last()
-                                .map(|c| c.timestamp.timestamp_millis() as u64)
-                                .unwrap_or(0);
-                            if let Some(&last_time) = last_traded_candle.get(symbol) {
-                                if last_time == current_candle_time {
-                                    log::debug!(
-                                        "[TRADE] Duplicate signal for candle {}, skipping.",
-                                        current_candle_time
-                                    );
-                                    continue;
-                                }
-                            }
-
-                            // ── Entry price: use the TRADE SYMBOL's last aggTrade price ──
-                            let entry_price =
-                                last_prices.get(symbol).copied().unwrap_or_else(|| {
-                                    // Fallback: use the trade symbol's last closed 15m candle close.
-                                    trade_md
-                                        .candles_15m
-                                        .last()
-                                        .map(|c| c.close)
-                                        .unwrap_or(dec!(0))
-                                });
-
-                            if entry_price == dec!(0) {
-                                log::warn!("[TRADE] Skipping — no price available for {}", symbol);
-                                continue;
-                            }
-                            let direction = TradeDirection::Long;
-                            let slipped_entry_price = match direction {
-                                TradeDirection::Long => {
-                                    entry_price
-                                        * (Decimal::ONE
-                                            + crate::exchange::config::MOCK_SLIPPAGE_PCT)
-                                }
-                                TradeDirection::Short => {
-                                    entry_price
-                                        * (Decimal::ONE
-                                            - crate::exchange::config::MOCK_SLIPPAGE_PCT)
-                                }
-                            };
-
-                            // Calculate position size via risk manager
-                            let rm = risk_manager.lock().await;
-
-                            if rm.is_trading_halted() {
-                                log::warn!("[TRADE] Circuit breaker active — skipping entry");
-                                continue;
-                            }
-
-                            if trade_manager.active_trades().len()
-                                >= crate::exchange::config::MAX_OPEN_POSITIONS
-                            {
-                                log::warn!("[TRADE] MAX_OPEN_POSITIONS guard hit — skipping entry");
-                                continue;
-                            }
-
-                            // ── Compute indicators from the TRADE SYMBOL's candles ──────
-                            let mut atr_15m = dec!(0);
-                            let mut rsi_val = dec!(0);
-                            let mut adx_val = dec!(0);
-
-                            let closes: Vec<f64> = trade_md
-                                .candles_15m
-                                .iter()
-                                .map(|c| c.close.to_f64().unwrap_or(0.0))
-                                .collect();
-                            let highs: Vec<f64> = trade_md
-                                .candles_15m
-                                .iter()
-                                .map(|c| c.high.to_f64().unwrap_or(0.0))
-                                .collect();
-                            let lows: Vec<f64> = trade_md
-                                .candles_15m
-                                .iter()
-                                .map(|c| c.low.to_f64().unwrap_or(0.0))
-                                .collect();
-
-                            if closes.len() > 14 {
-                                let mut tr_sum = 0.0;
-                                let mut gains = 0.0;
-                                let mut losses = 0.0;
-                                for i in 1..15 {
-                                    let idx = closes.len() - i;
-                                    let tr1 = highs[idx] - lows[idx];
-                                    let tr2 = (highs[idx] - closes[idx - 1]).abs();
-                                    let tr3 = (lows[idx] - closes[idx - 1]).abs();
-                                    tr_sum += tr1.max(tr2).max(tr3);
-
-                                    let diff = closes[idx] - closes[idx - 1];
-                                    if diff > 0.0 {
-                                        gains += diff;
-                                    } else {
-                                        losses -= diff;
+                                let direction = TradeDirection::Long;
+                                let slipped_entry_price = match direction {
+                                    TradeDirection::Long => {
+                                        entry_price
+                                            * (Decimal::ONE
+                                                + crate::exchange::config::MOCK_SLIPPAGE_PCT)
                                     }
+                                    TradeDirection::Short => {
+                                        entry_price
+                                            * (Decimal::ONE
+                                                - crate::exchange::config::MOCK_SLIPPAGE_PCT)
+                                    }
+                                };
+
+                                let rm = risk_manager.lock().await;
+
+                                if rm.is_trading_halted() {
+                                    log::warn!("[TRADE] Circuit breaker active — skipping entry");
+                                    continue 'symbol_loop;
                                 }
-                                if let Some(atr) =
-                                    rust_decimal::Decimal::from_f64_retain(tr_sum / 14.0)
+
+                                if trade_manager.active_trades().len()
+                                    >= crate::exchange::config::MAX_OPEN_POSITIONS
                                 {
-                                    atr_15m = atr;
+                                    log::warn!(
+                                        "[TRADE] MAX_OPEN_POSITIONS guard hit — skipping entry"
+                                    );
+                                    continue 'symbol_loop;
                                 }
 
-                                let avg_loss = losses / 14.0;
-                                if avg_loss == 0.0 {
-                                    rsi_val = dec!(100);
-                                } else {
-                                    let rs = (gains / 14.0) / avg_loss;
-                                    if let Some(rsi) = rust_decimal::Decimal::from_f64_retain(
-                                        100.0 - (100.0 / (1.0 + rs)),
-                                    ) {
-                                        rsi_val = rsi;
-                                    }
-                                }
-                                adx_val = dec!(25); // Simplified ADX proxy
-                            }
+                                // ── Compute indicators from the symbol's own candles ────
+                                let mut atr_15m = dec!(0);
+                                let mut rsi_val = dec!(0);
+                                let mut adx_val = dec!(0);
 
-                            // ── ATR-based Stop Loss & Take Profit ────────────────────
-                            // Skip if ATR is zero (insufficient data for the trade symbol).
-                            if atr_15m == dec!(0) {
-                                log::warn!("[TRADE] ATR is zero for {} — insufficient candle data, skipping", symbol);
-                                continue;
-                            }
-                            let atr_4h = atr_15m; // Proxy: use 15m ATR until 4H data accumulates.
-                            let stop_loss = slipped_entry_price - dec!(2) * atr_15m;
-                            let take_profit = slipped_entry_price + dec!(3) * atr_15m;
+                                let closes: Vec<f64> = trade_md
+                                    .candles_15m
+                                    .iter()
+                                    .map(|c| c.close.to_f64().unwrap_or(0.0))
+                                    .collect();
+                                let highs: Vec<f64> = trade_md
+                                    .candles_15m
+                                    .iter()
+                                    .map(|c| c.high.to_f64().unwrap_or(0.0))
+                                    .collect();
+                                let lows: Vec<f64> = trade_md
+                                    .candles_15m
+                                    .iter()
+                                    .map(|c| c.low.to_f64().unwrap_or(0.0))
+                                    .collect();
 
-                            log::info!(
-                                "[TRADE] {} raw_entry={} slipped_entry={} | ATR={} | SL={} TP={}",
-                                symbol,
-                                entry_price,
-                                slipped_entry_price,
-                                atr_15m,
-                                stop_loss,
-                                take_profit
-                            );
+                                if closes.len() > 14 {
+                                    let mut tr_sum = 0.0;
+                                    let mut gains = 0.0;
+                                    let mut losses = 0.0;
+                                    for i in 1..15 {
+                                        let idx = closes.len() - i;
+                                        let tr1 = highs[idx] - lows[idx];
+                                        let tr2 = (highs[idx] - closes[idx - 1]).abs();
+                                        let tr3 = (lows[idx] - closes[idx - 1]).abs();
+                                        tr_sum += tr1.max(tr2).max(tr3);
 
-                            match rm.calculate_position_size(
-                                slipped_entry_price,
-                                stop_loss,
-                                atr_15m,
-                                atr_4h,
-                                None,
-                            ) {
-                                Ok(sizing) => {
-                                    let trade_id = format!("mock-{}", uuid::Uuid::new_v4());
-
-                                    // Drop the risk manager lock before performing I/O via trade_manager
-                                    drop(rm);
-
-                                    // Use TradeManager to open trade, log to CSV, and update active_trades
-                                    match trade_manager.open_trade(
-                                        &trade_id,
-                                        symbol,
-                                        direction,
-                                        slipped_entry_price,
-                                        stop_loss,
-                                        take_profit,
-                                        sizing.size,
-                                        atr_15m,
-                                        rsi_val,
-                                        adx_val,
-                                        "LiveSignal".to_string(),
-                                    ) {
-                                        Ok(trade) => {
-                                            // Update last_traded_candle since trade successfully opened
-                                            last_traded_candle
-                                                .insert(symbol.to_string(), current_candle_time);
-
-                                            log::info!(
-                                                "[TRADE] ✅ ENTRY: {} {} @ {} | SL={} TP={} | Size={}",
-                                                trade.direction, trade.symbol, slipped_entry_price,
-                                                stop_loss, take_profit, sizing.size
-                                            );
-                                        }
-                                        Err(e) => {
-                                            log::error!(
-                                                "[TRADE] Failed to open trade in TradeManager: {}",
-                                                e
-                                            );
+                                        let diff = closes[idx] - closes[idx - 1];
+                                        if diff > 0.0 {
+                                            gains += diff;
+                                        } else {
+                                            losses -= diff;
                                         }
                                     }
+                                    if let Some(atr) =
+                                        rust_decimal::Decimal::from_f64_retain(tr_sum / 14.0)
+                                    {
+                                        atr_15m = atr;
+                                    }
+
+                                    let avg_loss = losses / 14.0;
+                                    if avg_loss == 0.0 {
+                                        rsi_val = dec!(100);
+                                    } else {
+                                        let rs = (gains / 14.0) / avg_loss;
+                                        if let Some(rsi) =
+                                            rust_decimal::Decimal::from_f64_retain(
+                                                100.0 - (100.0 / (1.0 + rs)),
+                                            )
+                                        {
+                                            rsi_val = rsi;
+                                        }
+                                    }
+                                    adx_val = dec!(25); // Simplified ADX proxy
                                 }
-                                Err(e) => {
-                                    log::warn!("[TRADE] Position sizing rejected: {}", e);
+
+                                // Skip if ATR is zero (insufficient data).
+                                if atr_15m == dec!(0) {
+                                    log::warn!(
+                                        "[TRADE] ATR is zero for {} — insufficient candle data, skipping",
+                                        symbol
+                                    );
+                                    continue 'symbol_loop;
+                                }
+
+                                let atr_4h = atr_15m; // Proxy: use 15m ATR until 4H accumulates.
+                                let stop_loss = slipped_entry_price - dec!(2) * atr_15m;
+                                let take_profit = slipped_entry_price + dec!(3) * atr_15m;
+
+                                log::info!(
+                                    "[TRADE] {} raw_entry={} slipped_entry={} | ATR={} | SL={} TP={}",
+                                    symbol,
+                                    entry_price,
+                                    slipped_entry_price,
+                                    atr_15m,
+                                    stop_loss,
+                                    take_profit
+                                );
+
+                                match rm.calculate_position_size(
+                                    slipped_entry_price,
+                                    stop_loss,
+                                    atr_15m,
+                                    atr_4h,
+                                    None,
+                                ) {
+                                    Ok(sizing) => {
+                                        let trade_id = format!("mock-{}", uuid::Uuid::new_v4());
+
+                                        // Release the lock before CSV I/O.
+                                        drop(rm);
+
+                                        match trade_manager.open_trade(
+                                            &trade_id,
+                                            symbol,
+                                            direction,
+                                            slipped_entry_price,
+                                            stop_loss,
+                                            take_profit,
+                                            sizing.size,
+                                            atr_15m,
+                                            rsi_val,
+                                            adx_val,
+                                            "LiveSignal".to_string(),
+                                        ) {
+                                            Ok(trade) => {
+                                                last_traded_candle.insert(
+                                                    symbol.to_string(),
+                                                    current_candle_time,
+                                                );
+                                                log::info!(
+                                                    "[TRADE] ✅ ENTRY: {} {} @ {} | SL={} TP={} | Size={}",
+                                                    trade.direction,
+                                                    trade.symbol,
+                                                    slipped_entry_price,
+                                                    stop_loss,
+                                                    take_profit,
+                                                    sizing.size
+                                                );
+                                            }
+                                            Err(e) => {
+                                                log::error!(
+                                                    "[TRADE] Failed to open trade for {}: {}",
+                                                    symbol,
+                                                    e
+                                                );
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        log::warn!(
+                                            "[TRADE] Position sizing rejected for {}: {}",
+                                            symbol,
+                                            e
+                                        );
+                                    }
                                 }
                             }
-                        }
-                        Ok(false) => {
-                            // Suppress spam for open candles
-                        }
-                        Err(EvaluatorError::InsufficientData {
-                            required,
-                            got,
-                            interval,
-                        }) => {
-                            log::debug!(
-                                "[EVALUATOR] Insufficient data for {:?}: required {}, available {}",
-                                interval,
+                            Ok(false) => {
+                                // No signal — suppress log spam for open candles.
+                            }
+                            Err(EvaluatorError::InsufficientData {
                                 required,
-                                got
-                            );
+                                got,
+                                interval,
+                            }) => {
+                                log::debug!(
+                                    "[EVALUATOR] Insufficient data for {} {:?}: required {}, got {}",
+                                    symbol,
+                                    interval,
+                                    required,
+                                    got
+                                );
+                            }
+                            Err(e) => {
+                                log::warn!(
+                                    "[EVALUATOR] Evaluation error on {}: {:?}",
+                                    symbol,
+                                    e
+                                );
+                            }
                         }
-                        Err(e) => {
-                            log::warn!("[EVALUATOR] Evaluation error: {:?}", e);
-                        }
-                    }
+                    } // end 'symbol_loop
                 }
             }
 

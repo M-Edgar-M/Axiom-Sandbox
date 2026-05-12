@@ -171,15 +171,16 @@ function TradeJournal({ tradeHistory }: { tradeHistory: TradeRecordDto[] }) {
 
 // ─── Subcomponents ───────────────────────────────────────────────────────────
 
-function BasicRiskTab({ config, onChange }: { config: UserStrategyConfig; onChange: React.Dispatch<React.SetStateAction<UserStrategyConfig>> }) {
+function BasicRiskTab({ config, onChange, systemStatus }: { config: UserStrategyConfig; onChange: React.Dispatch<React.SetStateAction<UserStrategyConfig>>; systemStatus: SystemStatus | null }) {
   const { risk } = config;
   const setRisk = (field: keyof typeof config.risk, value: number) => onChange(prev => ({ ...prev, risk: { ...prev.risk, [field]: value } }));
 
-  const [simulatedAccountSize, setSimulatedAccountSize] = useState(10000);
   const [simulatedStopLoss, setSimulatedStopLoss] = useState(50);
 
-  const maxLoss = simulatedAccountSize * risk.risk_per_trade;
-  const sharesToBuy = Math.floor(maxLoss / simulatedStopLoss);
+  // Account size is derived from the live Testnet equity polled via systemStatus.
+  const accountSize = systemStatus ? Number(systemStatus.current_equity) : 0;
+  const maxLoss = accountSize * risk.risk_per_trade;
+  const sharesToBuy = simulatedStopLoss > 0 ? Math.floor(maxLoss / simulatedStopLoss) : 0;
 
   return (
     <div className="flex flex-col gap-sm p-lg">
@@ -258,13 +259,15 @@ function BasicRiskTab({ config, onChange }: { config: UserStrategyConfig; onChan
         
         <div className="grid grid-cols-1 md:grid-cols-2 gap-lg mt-sm mb-md">
           <div className="flex flex-col gap-xs">
-            <label className="font-body-sm text-body-sm text-on-surface-variant">Account Balance ($)</label>
-            <input 
-              type="number" 
-              className="bg-surface-container border border-outline-variant text-inverse-surface rounded focus:ring-primary-container focus:border-primary-container font-body-md p-2"
-              value={simulatedAccountSize}
-              onChange={(e) => setSimulatedAccountSize(Number(e.target.value))}
-            />
+            <label className="font-body-sm text-body-sm text-on-surface-variant">
+              Account Balance ($)
+              <span className="ml-2 text-[10px] text-[#00FFAA] font-bold tracking-widest uppercase">Testnet Live</span>
+            </label>
+            <div className="bg-surface-container border border-[#00FFAA]/30 text-inverse-surface rounded font-body-md p-2 tabular-nums">
+              {accountSize > 0
+                ? `$${accountSize.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                : <span className="text-on-surface-variant text-sm italic">Start a session to fetch balance</span>}
+            </div>
           </div>
           <div className="flex flex-col gap-xs">
             <label className="font-body-sm text-body-sm text-on-surface-variant">Stop Loss Distance ($)</label>
@@ -279,7 +282,7 @@ function BasicRiskTab({ config, onChange }: { config: UserStrategyConfig; onChan
         
         <div className="bg-[#121212] p-md rounded border border-[#00FFAA]/20">
           <p className="text-[#00FFAA] font-body-lg text-[16px] leading-relaxed drop-shadow-[0_0_8px_rgba(0,255,170,0.3)]">
-            To risk exactly <span className="text-[#0070FF] font-bold drop-shadow-[0_0_4px_rgba(0,112,255,0.5)]">{fmtPct(risk.risk_per_trade)}</span>, you can tolerate a maximum loss of <span className="text-[#0070FF] font-bold drop-shadow-[0_0_4px_rgba(0,112,255,0.5)]">${maxLoss.toFixed(2)}</span>. 
+            To risk exactly <span className="text-[#0070FF] font-bold drop-shadow-[0_0_4px_rgba(0,112,255,0.5)]">{fmtPct(risk.risk_per_trade)}</span> of your <span className="text-[#0070FF] font-bold drop-shadow-[0_0_4px_rgba(0,112,255,0.5)]">${accountSize.toFixed(2)}</span> balance, you can tolerate a maximum loss of <span className="text-[#0070FF] font-bold drop-shadow-[0_0_4px_rgba(0,112,255,0.5)]">${maxLoss.toFixed(2)}</span>.
             If your stop loss is <span className="text-[#0070FF] font-bold drop-shadow-[0_0_4px_rgba(0,112,255,0.5)]">${simulatedStopLoss.toFixed(2)}</span> away, you should buy exactly <span className="text-[#0070FF] font-bold drop-shadow-[0_0_4px_rgba(0,112,255,0.5)]">{sharesToBuy}</span> shares/contracts.
           </p>
         </div>
@@ -682,7 +685,7 @@ export default function App() {
                   </h2>
                 </div>
                 
-                {activeTab === 'basic' && <BasicRiskTab config={config} onChange={setConfig} />}
+                {activeTab === 'basic' && <BasicRiskTab config={config} onChange={setConfig} systemStatus={systemStatus} />}
                 {activeTab === 'advanced' && <AdvancedTab config={config} onChange={setConfig} />}
                 {activeTab === 'builder' && <StrategyBuilderTab config={config} onChange={setConfig} />}
               </div>
